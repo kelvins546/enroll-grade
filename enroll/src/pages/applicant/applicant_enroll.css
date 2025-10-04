@@ -1,0 +1,13 @@
+.mainContent {
+    align-items: center;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    align-items: center;
+    justify-content: center;
+    display: flex;
+    background-color: white;
+    padding-top: 20px;
+    flex-direction: column;
+    padding-bottom: 50px;
+}
