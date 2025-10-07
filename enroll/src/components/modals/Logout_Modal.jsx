@@ -1,7 +1,10 @@
-import './logout_modal.css'
-import { useEffect } from 'react'
+import './logout_modal.css';
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
-export const Logout_Modal = ({ show, onClose, onConfirm }) => {
+export const Logout_Modal = ({ show, onClose }) => {
+  const navigate = useNavigate();
+
   useEffect(() => {
     if (!show) return;
 
@@ -15,6 +18,14 @@ export const Logout_Modal = ({ show, onClose, onConfirm }) => {
     };
   }, [show, onClose]);
 
+  const handleLogout = () => {
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('role');
+
+    onClose();
+    navigate('/');
+  };
+
   if (!show) return null;
 
   return (
@@ -25,8 +36,12 @@ export const Logout_Modal = ({ show, onClose, onConfirm }) => {
           <p>Are you sure you want to log out?</p>
         </div>
         <div className="logout-box-buttons">
-          <button className="confirm-btn" onClick={onConfirm}>Confirm</button>
-          <button className="cancel" onClick={onClose}>Cancel</button>
+          <button className="confirm-btn" onClick={handleLogout}>
+            Confirm
+          </button>
+          <button className="cancel" onClick={onClose}>
+            Cancel
+          </button>
         </div>
       </div>
     </div>

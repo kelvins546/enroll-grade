@@ -1,8 +1,11 @@
-import React from "react";
-import "./navigationbar.css";
+import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import './navigationbar.css';
 
 export const Navigation_Bar = ({ userRole }) => {
-  if (userRole === "student") {
+  const navigate = useNavigate();
+
+  if (userRole === 'student') {
     return (
       <div className="navigation-bar">
         <span className="nav-item">Enrollment</span>
@@ -12,15 +15,21 @@ export const Navigation_Bar = ({ userRole }) => {
     );
   }
 
-  if (userRole === "applicant") {
+  if (userRole === 'applicant') {
     return (
       <div className="navigation-bar">
-        <span className="nav-item">Home</span>
+        <span
+          className="nav-item"
+          style={{ cursor: 'pointer' }}
+          onClick={() => navigate('/applicant_homepage')}
+        >
+          Home
+        </span>
       </div>
     );
   }
 
-  if (userRole === "teacher") {
+  if (userRole === 'teacher') {
     return (
       <div className="navigation-bar">
         <span className="nav-item">Classes</span>
@@ -31,7 +40,7 @@ export const Navigation_Bar = ({ userRole }) => {
     );
   }
 
-  if (userRole === "admin") {
+  if (userRole === 'admin') {
     return (
       <div className="navigation-bar">
         <span className="nav-item">Dashboard</span>
@@ -43,7 +52,6 @@ export const Navigation_Bar = ({ userRole }) => {
       </div>
     );
   }
-
 
   return null;
 };

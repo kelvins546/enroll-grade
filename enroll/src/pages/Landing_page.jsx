@@ -1,82 +1,172 @@
-import { useState } from "react";
+import { useState } from 'react';
 import './landing_page.css';
 import { Header } from '../components/Header';
-import { Footer } from "../components/Footer";
-import { Link } from 'react-router-dom';
+import { Footer } from '../components/Footer';
+import { Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
+import { useSession } from '../context/SessionContext';
 
 export const Landing_page = () => {
-    const [showPassword, setShowPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [role, setRole] = useState('applicant');
+  const [form, setForm] = useState({ id: '', password: '' });
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const { setSession } = useSession();
 
-    return (
-        <>
-        
-        <Header />
-        <div className="content">
-            <div className="landing_page" style={{ 
-            backgroundImage: `linear-gradient(rgba(41, 112, 60, 0.5), rgba(41, 112, 60, 0.5)), url("/school.png")` 
-        }}>
-                <div className="container">
-                    <div className="mission_Vision">
-                    <div className="titleName">
-                        <h2>Student Enrollment and Grading Access System</h2>
-                    </div>
-                    <div className='mission'>
-                        <h2>Mission</h2>
-                        <p>
-                        To protect the right of every Filipino to quality, equitable, culture-based, and complete basic education where: Students learn in a child-friendly, gender sensitive, and safe and motivating environment.
-                        </p>
-                    </div>
-                    <div className='vision'>
-                        <h2>Vision</h2>
-                        <p>
-                        We dream of Filipinos who passionately love their country and whose competencies and values enable them to realize their full potential and contribute meaningfully to building the nation. As a learner-centered public institution, the Benigno Aquino Jr. High School continuously improves itself to better service its stakeholders.
-                        </p>
-                    </div>
-                </div>
-                    <div className='login_Form'>
-                        <h2>User Authentication</h2>
-                        <div className='login_Form_Box'>
-                            
-                            <div className="input_Box">
-                            <input name="email" required />
-                            <label>ID</label>
-                            </div>
+  const handleInputChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
 
-                            <div className="input_Box">
-                            <input 
-                                type={showPassword ? "text" : "password"} 
-                                name="password" 
-                                required 
-                            />
-                            <img
-                                src={showPassword ? "images/open_eye.png" : "images/closed_eye.png"}
-                                style={{ width: "25px", height: "25px", cursor: "pointer" }}
-                                alt="toggle password"
-                                onClick={() => setShowPassword(!showPassword)}
-                            />
-                            <label>Password</label>
-                            </div>
+  const handleRoleChange = (e) => {
+    setRole(e.target.value);
+    setError('');
+  };
 
-                            <div className="passoption">
-                            <p><a>Forgot Password?</a></p>
-                            </div>
-                            
-                            <button type="submit" className="btn">Login</button>
-                            <div className="enroll">
-                            <p>Are you an applicant/enrollee? 
-                                <Link to='/Register_ph1'>
-                                <strong> Apply/Enroll here.</strong>
-                                </Link>
-                            </p>
-                            </div>
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError('');
 
-                        </div>
-                    </div>
-                </div>
+    const filterColumn = role === 'applicant' ? 'applicant_id' : 'student_id';
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq(filterColumn, form.id)
+      .eq('password_hash', form.password)
+      .eq('role', role)
+      .single();
+
+    if (error || !data) {
+      setError('Invalid login credentials.');
+      return;
+    }
+
+    setSession(data.user_id, data.role);
+
+    if (role === 'applicant') navigate('/applicant_homepage');
+    else navigate('/student_homepage');
+  };
+
+  return (
+    <>
+      <Header />
+      <div className="content">
+        <div
+          className="landing_page"
+          style={{
+            backgroundImage: `linear-gradient(rgba(41, 112, 60, 0.5), rgba(41, 112, 60, 0.5)), url("/school.png")`,
+          }}
+        >
+          <div className="container">
+            <div className="mission_Vision">
+              <div className="titleName">
+                <h2>Student Enrollment and Grading Access System</h2>
+              </div>
+              <div className="mission">
+                <h2>Mission</h2>
+                <p>
+                  To protect the right of every Filipino to quality, equitable,
+                  culture-based, and complete basic education where: Students
+                  learn in a child-friendly, gender sensitive, and safe and
+                  motivating environment.
+                </p>
+              </div>
+              <div className="vision">
+                <h2>Vision</h2>
+                <p>
+                  We dream of Filipinos who passionately love their country and
+                  whose competencies and values enable them to realize their
+                  full potential and contribute meaningfully to building the
+                  nation. As a learner-centered public institution, the Benigno
+                  Aquino Jr. High School continuously improves itself to better
+                  service its stakeholders.
+                </p>
+              </div>
             </div>
-            <Footer />
+            <div className="login_Form">
+              <h2>User Authentication</h2>
+              <div className="login_Form_Box">
+                <form onSubmit={handleLogin}>
+                  <div className="roleSelector">
+                    <label>
+                      <input
+                        type="radio"
+                        value="applicant"
+                        checked={role === 'applicant'}
+                        onChange={handleRoleChange}
+                      />{' '}
+                      Applicant
+                    </label>
+                    <label style={{ marginLeft: 20 }}>
+                      <input
+                        type="radio"
+                        value="student"
+                        checked={role === 'student'}
+                        onChange={handleRoleChange}
+                      />{' '}
+                      Student
+                    </label>
+                  </div>
+                  <div className="input_Box">
+                    <input
+                      name="id"
+                      value={form.id}
+                      onChange={handleInputChange}
+                      required
+                    />
+                    <label>
+                      {role === 'applicant' ? 'Applicant ID' : 'Student ID'}
+                    </label>
+                  </div>
+                  <div className="input_Box">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      name="password"
+                      value={form.password}
+                      onChange={handleInputChange}
+                      required
+                    />
+                    <img
+                      src={
+                        showPassword
+                          ? 'images/open_eye.png'
+                          : 'images/closed_eye.png'
+                      }
+                      style={{
+                        width: '25px',
+                        height: '25px',
+                        cursor: 'pointer',
+                      }}
+                      alt="toggle password"
+                      onClick={() => setShowPassword(!showPassword)}
+                    />
+                    <label>Password</label>
+                  </div>
+                  {error && <div className="error">{error}</div>}
+                  <div className="passoption">
+                    <p>
+                      <a>Forgot Password?</a>
+                    </p>
+                  </div>
+                  <button type="submit" className="btn">
+                    Login
+                  </button>
+                  <div className="enroll">
+                    <p>
+                      Are you an applicant/enrollee?
+                      <Link to="/Register_ph1">
+                        <strong> Apply/Enroll here.</strong>
+                      </Link>
+                    </p>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        </>
-    )
-}
+        <Footer />
+      </div>
+    </>
+  );
+};
