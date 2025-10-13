@@ -5,8 +5,14 @@ import { Applicant_Homepage } from './pages/applicant/Applicant_Homepage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Applicant_Enroll1 } from './pages/applicant/Applicant_Enroll';
 import { Applicant_Profile } from './pages/applicant/Applicant_Profile';
+import { Admin_Dashboard } from './pages/admin/Admin-Dashboard';
+import { Admin_Enrollment } from './pages/admin/Admin-Enrollment';
+import { Admin_Placement } from './pages/admin/Admin-Placement';
+import { Admin_Scheduling } from './pages/admin/Admin-Scheduling';
+import { Admin_Grades } from './pages/admin/Admin-Grades';
+import { Admin_Manage } from './pages/admin/Admin-Manage';
+import { Admin_Analytics } from './pages/admin/Admin-Analytics';
 
-// No <BrowserRouter> here!
 function App() {
   return (
     <Routes>
@@ -19,6 +25,18 @@ function App() {
         <Route path="Applicant_Homepage" element={<Applicant_Homepage />} />
         <Route path="Applicant_Enroll1" element={<Applicant_Enroll1 />} />
         <Route path="Applicant_Profile" element={<Applicant_Profile />} />
+      </Route>
+
+      <Route
+        element={<ProtectedRoute allowRoles={['super_admin', 'principal']} />}
+      >
+        <Route path="Dashboard" element={<Admin_Dashboard />} />
+        <Route path="Admin-Enrollment" element={<Admin_Enrollment />} />
+        <Route path="/Placement" element={<Admin_Placement />} />
+        <Route path="/Scheduling" element={<Admin_Scheduling />} />
+        <Route path="/Admin-Grades" element={<Admin_Grades />} />
+        <Route path="/Manage" element={<Admin_Manage />} />
+        <Route path="/Analytics" element={<Admin_Analytics />} />
       </Route>
 
       {/* Fallback route */}

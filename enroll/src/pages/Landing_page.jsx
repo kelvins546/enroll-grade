@@ -8,7 +8,6 @@ import { useSession } from '../context/SessionContext';
 
 export const Landing_page = () => {
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState('applicant');
   const [form, setForm] = useState({ id: '', password: '' });
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -18,34 +17,74 @@ export const Landing_page = () => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleRoleChange = (e) => {
-    setRole(e.target.value);
-    setError('');
-  };
-
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
 
-    const filterColumn = role === 'applicant' ? 'applicant_id' : 'student_id';
-
-    const { data, error } = await supabase
+    // Try by email first
+    let { data, error: loginError } = await supabase
       .from('users')
       .select('*')
-      .eq(filterColumn, form.id)
+      .eq('email', form.id)
       .eq('password_hash', form.password)
-      .eq('role', role)
       .single();
 
-    if (error || !data) {
+    // If not found by email, try by applicant_id
+    if (!data) {
+      const applicantRes = await supabase
+        .from('users')
+        .select('*')
+        .eq('applicant_id', form.id)
+        .eq('password_hash', form.password)
+        .single();
+      data = applicantRes.data;
+      loginError = applicantRes.error;
+    }
+
+    // If not found by applicant_id, try by student_id
+    if (!data) {
+      const studentRes = await supabase
+        .from('users')
+        .select('*')
+        .eq('student_id', form.id)
+        .eq('password_hash', form.password)
+        .single();
+      data = studentRes.data;
+      loginError = studentRes.error;
+    }
+
+    if (loginError || !data) {
       setError('Invalid login credentials.');
       return;
     }
 
     setSession(data.user_id, data.role);
 
-    if (role === 'applicant') navigate('/applicant_homepage');
-    else navigate('/student_homepage');
+    // Route based on the detected database role
+    switch (data.role) {
+      case 'applicant':
+        navigate('/Applicant_Homepage');
+        break;
+      case 'student':
+        navigate('/Student_Homepage');
+        break;
+      case 'adviser':
+      case 'teacher':
+        navigate('/Teacher_Homepage');
+        break;
+      case 'dept_head':
+        navigate('/DeptHead_Dashboard');
+        break;
+      case 'principal':
+        navigate('/Dashboard');
+        break;
+      case 'super_admin':
+        navigate('/Admin_Dashboard');
+        break;
+      default:
+        setError('Unknown user role.');
+        break;
+    }
   };
 
   return (
@@ -55,7 +94,8 @@ export const Landing_page = () => {
         <div
           className="landing_page"
           style={{
-            backgroundImage: `linear-gradient(rgba(41, 112, 60, 0.5), rgba(41, 112, 60, 0.5)), url("/school.png")`,
+            backgroundImage:
+              'linear-gradient(rgba(41, 112, 60, 0.5), rgba(41, 112, 60, 0.5)), url("/school.png")',
           }}
         >
           <div className="container">
@@ -88,26 +128,6 @@ export const Landing_page = () => {
               <h2>User Authentication</h2>
               <div className="login_Form_Box">
                 <form onSubmit={handleLogin}>
-                  <div className="roleSelector">
-                    <label>
-                      <input
-                        type="radio"
-                        value="applicant"
-                        checked={role === 'applicant'}
-                        onChange={handleRoleChange}
-                      />{' '}
-                      Applicant
-                    </label>
-                    <label style={{ marginLeft: 20 }}>
-                      <input
-                        type="radio"
-                        value="student"
-                        checked={role === 'student'}
-                        onChange={handleRoleChange}
-                      />{' '}
-                      Student
-                    </label>
-                  </div>
                   <div className="input_Box">
                     <input
                       name="id"
@@ -115,9 +135,7 @@ export const Landing_page = () => {
                       onChange={handleInputChange}
                       required
                     />
-                    <label>
-                      {role === 'applicant' ? 'Applicant ID' : 'Student ID'}
-                    </label>
+                    <label>Applicant ID / Student ID / Email</label>
                   </div>
                   <div className="input_Box">
                     <input

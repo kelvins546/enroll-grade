@@ -50,14 +50,55 @@ export const Register_ph1 = () => {
 
   const validateForm = () => {
     let errors = {};
+    // Name validation - no numbers
+    const nameRegex = /^[A-Za-z\s'-]+$/;
     if (!formData.lastName.trim()) errors.lastName = 'Last Name is required';
+    else if (!nameRegex.test(formData.lastName))
+      errors.lastName = 'No numbers allowed in Last Name';
     if (!formData.firstName.trim()) errors.firstName = 'First Name is required';
-    if (!formData.birthDate.trim()) errors.birthDate = 'Birthdate is required';
+    else if (!nameRegex.test(formData.firstName))
+      errors.firstName = 'No numbers allowed in First Name';
+    if (formData.middleName && !nameRegex.test(formData.middleName))
+      errors.middleName = 'No numbers allowed in Middle Name';
+
+    // Birthdate validation - age restriction 12 <= age <= 100
+    if (!formData.birthDate.trim()) {
+      errors.birthDate = 'Birthdate is required';
+    } else {
+      const birthDate = new Date(formData.birthDate);
+      const today = new Date();
+      let age = today.getFullYear() - birthDate.getFullYear();
+      const m = today.getMonth() - birthDate.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
+      if (age < 12) errors.birthDate = 'Must be at least 12 years old';
+      if (age > 100) errors.birthDate = 'Age cannot exceed 100 years';
+    }
+
+    // Basic email check (HTML5 type=email will already help, but for manual validation)
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!formData.email.trim()) errors.email = 'Email is required';
-    if (!formData.password) errors.password = 'Password is required';
+    else if (!emailRegex.test(formData.email))
+      errors.email = 'Invalid email address';
+
+    // Password validation
+    const password = formData.password;
+    if (!password) errors.password = 'Password is required';
+    else {
+      if (password.length < 8)
+        errors.password = 'At least 8 characters required';
+      else if (!/[A-Z]/.test(password))
+        errors.password = 'At least one uppercase letter required';
+      else if (!/[a-z]/.test(password))
+        errors.password = 'At least one lowercase letter required';
+      else if (!/[0-9]/.test(password))
+        errors.password = 'At least one number required';
+      else if (!/[!@#$%^&*(),.?":{}|<>]/.test(password))
+        errors.password = 'At least one special character required';
+    }
+
     if (!formData.confirmPassword)
       errors.confirmPassword = 'Confirm Password is required';
-    if (formData.password !== formData.confirmPassword)
+    else if (formData.password !== formData.confirmPassword)
       errors.confirmPassword = 'Passwords do not match';
 
     setErrorMessages(errors);

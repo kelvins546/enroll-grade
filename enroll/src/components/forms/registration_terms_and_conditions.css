@@ -13,7 +13,7 @@
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -29,15 +29,15 @@
   background: #fff;
   padding: 30px;
   text-align: left;
-  box-shadow: 
-    0 8px 24px rgba(0,0,0,0.2),
-    0 16px 48px rgba(0,0,0,0.15);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.2),
+    0 16px 48px rgba(0, 0, 0, 0.15);
   animation: popIn 0.3s ease;
   overflow-y: auto;
   scrollbar-width: thin;
   display: flex;
   flex-direction: column;
-  align-self:  last baseline;
+  align-self: last baseline;
   background-clip: padding-box;
 }
 
@@ -102,7 +102,7 @@ ol ul li {
   width: 100%;
 }
 
-button {
+.buttons button {
   display: block;
   background: #248041;
   color: #fff;
@@ -112,22 +112,30 @@ button {
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
-button:hover:not(:disabled) {
+.buttons button:hover:not(:disabled) {
   opacity: 0.9;
   transform: scale(1.02);
 }
 
-button:disabled {
+.buttons button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 @keyframes popIn {
-  0% { transform: scale(0.8); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 @media (max-width: 768px) {
@@ -144,7 +152,10 @@ button:disabled {
     font-size: 14px;
   }
 
-  p, ol > li, ol ul li, .checkbox {
+  p,
+  ol > li,
+  ol ul li,
+  .checkbox {
     font-size: 13px;
   }
 
@@ -169,7 +180,10 @@ button:disabled {
     font-size: 13px;
   }
 
-  p, ol > li, ol ul li, .checkbox {
+  p,
+  ol > li,
+  ol ul li,
+  .checkbox {
     font-size: 12px;
     line-height: 1.5;
   }

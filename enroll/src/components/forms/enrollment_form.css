@@ -59,6 +59,7 @@
   height: 40px;
   display: grid;
   width: 300px;
+  margin-bottom: 20px;
 }
 
 .suffix input {
@@ -71,6 +72,7 @@
 
 .buttons_Container {
   display: flex;
+  margin-top: 30px;
 }
 
 .buttons {

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import './otp_modal.css';
 import { Verified_Box } from './Verified';
 import { supabase } from '../../supabaseClient';
@@ -15,7 +15,26 @@ export const Otp_Modal = ({
   const [showVerifiedBox, setShowVerifiedBox] = useState(false);
   const [otp, setOtp] = useState(['', '', '', '']);
   const [errorMessage, setErrorMessage] = useState('');
+  const [cooldown, setCooldown] = useState(0);
   const inputRefs = [useRef(null), useRef(null), useRef(null), useRef(null)];
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (showOTPbox) {
+      setCooldown(180);
+    }
+  }, [showOTPbox]);
+
+  useEffect(() => {
+    if (cooldown > 0) {
+      timerRef.current = setTimeout(() => {
+        setCooldown((prev) => prev - 1);
+      }, 1000);
+    } else {
+      clearTimeout(timerRef.current);
+    }
+    return () => clearTimeout(timerRef.current);
+  }, [cooldown]);
 
   if (!showOTPbox) return null;
 
@@ -93,13 +112,15 @@ export const Otp_Modal = ({
     setShowVerifiedBox(true);
     setTimeout(() => {
       if (onSuccess) onSuccess();
-    }, 1500000);
+    }, 15000000);
   };
 
   const handleResend = () => {
+    if (cooldown > 0) return;
     if (onResendOtp) onResendOtp(userData.email);
     setOtp(['', '', '', '']);
     setErrorMessage('A new OTP has been sent to your email.');
+    setCooldown(180);
   };
 
   return (
@@ -141,8 +162,14 @@ export const Otp_Modal = ({
           </div>
           <p>
             Didn't receive code?{' '}
-            <a onClick={handleResend} style={{ cursor: 'pointer' }}>
-              Resend
+            <a
+              onClick={handleResend}
+              style={{
+                cursor: cooldown > 0 ? 'not-allowed' : 'pointer',
+                color: cooldown > 0 ? 'grey' : '',
+              }}
+            >
+              Resend{cooldown > 0 ? ` (${cooldown}s)` : ''}
             </a>
           </p>
         </div>
