@@ -10,6 +10,7 @@ export const Landing_page = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({ id: '', password: '' });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
   const { setSession } = useSession();
 
@@ -17,73 +18,109 @@ export const Landing_page = () => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
+  // Simple identifier helpers
+  const looksLikeEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  const looksNumeric = (v) => /^\d+$/.test(v);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Try by email first
-    let { data, error: loginError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', form.id)
-      .eq('password_hash', form.password)
-      .single();
-
-    // If not found by email, try by applicant_id
-    if (!data) {
-      const applicantRes = await supabase
-        .from('users')
-        .select('*')
-        .eq('applicant_id', form.id)
-        .eq('password_hash', form.password)
-        .single();
-      data = applicantRes.data;
-      loginError = applicantRes.error;
+    // Client-side validation
+    const id = (form.id || '').trim();
+    const pw = form.password || '';
+    if (!id) {
+      setError('Please enter your Applicant ID, Student ID, or Email.');
+      return;
     }
-
-    // If not found by applicant_id, try by student_id
-    if (!data) {
-      const studentRes = await supabase
-        .from('users')
-        .select('*')
-        .eq('student_id', form.id)
-        .eq('password_hash', form.password)
-        .single();
-      data = studentRes.data;
-      loginError = studentRes.error;
-    }
-
-    if (loginError || !data) {
-      setError('Invalid login credentials.');
+    if (!pw) {
+      setError('Please enter your password.');
       return;
     }
 
-    setSession(data.user_id, data.role);
+    try {
+      setBusy(true);
 
-    // Route based on the detected database role
-    switch (data.role) {
-      case 'applicant':
-        navigate('/Applicant_Homepage');
-        break;
-      case 'student':
-        navigate('/Student_Homepage');
-        break;
-      case 'adviser':
-      case 'teacher':
-        navigate('/Teacher_Homepage');
-        break;
-      case 'dept_head':
-        navigate('/DeptHead_Dashboard');
-        break;
-      case 'principal':
-        navigate('/Dashboard');
-        break;
-      case 'super_admin':
-        navigate('/Admin_Dashboard');
-        break;
-      default:
-        setError('Unknown user role.');
-        break;
+      // 1) Locate the user by identifier only (no password yet)
+      let query = supabase.from('users').select('*').limit(1);
+
+      if (looksLikeEmail(id)) {
+        query = query.eq('email', id);
+      } else if (looksNumeric(id)) {
+        // Try applicant_id first, then student_id if needed
+        const { data: byApplicant, error: aErr } = await supabase
+          .from('users')
+          .select('*')
+          .eq('applicant_id', id)
+          .limit(1);
+        if (aErr) throw aErr;
+        if (byApplicant && byApplicant.length) {
+          query = null; // already found
+          var userRow = byApplicant[0];
+        } else {
+          query = supabase
+            .from('users')
+            .select('*')
+            .eq('student_id', id)
+            .limit(1);
+        }
+      } else {
+        // Treat as string ID first (applicant_id), then fallback to email if nothing matches
+        query = supabase
+          .from('users')
+          .select('*')
+          .eq('applicant_id', id)
+          .limit(1);
+      }
+
+      if (!userRow && query) {
+        const { data: found, error: fErr } = await query;
+        if (fErr) throw fErr;
+        userRow = found && found.length ? found[0] : null;
+      }
+
+      if (!userRow) {
+        setError('No account found for the provided identifier.');
+        return;
+      }
+
+      // 2) Check password against stored password_hash directly (your flow)
+      if (String(userRow.password_hash) !== String(pw)) {
+        setError('Incorrect password. Please try again.');
+        return;
+      }
+
+      // 3) Establish session and route by role
+      setSession(userRow.user_id, userRow.role);
+
+      switch (userRow.role) {
+        case 'applicant':
+          navigate('/Applicant_Homepage');
+          break;
+        case 'student':
+          navigate('/Student_Homepage');
+          break;
+        case 'adviser':
+        case 'teacher':
+          navigate('/Teacher_Homepage');
+          break;
+        case 'dept_head':
+          navigate('/DeptHead_Dashboard');
+          break;
+        case 'principal':
+          navigate('/Dashboard');
+          break;
+        case 'super_admin':
+          navigate('/Admin_Dashboard');
+          break;
+        default:
+          setError('Unknown user role. Please contact support.');
+          break;
+      }
+    } catch (err) {
+      setError('Login failed. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -124,6 +161,7 @@ export const Landing_page = () => {
                 </p>
               </div>
             </div>
+
             <div className="login_Form">
               <h2>User Authentication</h2>
               <div className="login_Form_Box">
@@ -134,9 +172,11 @@ export const Landing_page = () => {
                       value={form.id}
                       onChange={handleInputChange}
                       required
+                      autoComplete="username"
                     />
                     <label>Applicant ID / Student ID / Email</label>
                   </div>
+
                   <div className="input_Box">
                     <input
                       type={showPassword ? 'text' : 'password'}
@@ -144,6 +184,7 @@ export const Landing_page = () => {
                       value={form.password}
                       onChange={handleInputChange}
                       required
+                      autoComplete="current-password"
                     />
                     <img
                       src={
@@ -161,15 +202,23 @@ export const Landing_page = () => {
                     />
                     <label>Password</label>
                   </div>
-                  {error && <div className="error">{error}</div>}
+
+                  {error && (
+                    <div className="error" role="alert">
+                      {error}
+                    </div>
+                  )}
+
                   <div className="passoption">
                     <p>
                       <a>Forgot Password?</a>
                     </p>
                   </div>
-                  <button type="submit" className="btn">
-                    Login
+
+                  <button type="submit" className="btn" disabled={busy}>
+                    {busy ? 'Signing in…' : 'Login'}
                   </button>
+
                   <div className="enroll">
                     <p>
                       Are you an applicant/enrollee?

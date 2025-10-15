@@ -14,7 +14,7 @@ export const Admin_Grades = () => {
 
   return (
     <>
-      <Header />
+      <Header userRole="admin" />
       <Navigation_Bar userRole="super_admin" />
 
       <div className="gradingContainer">

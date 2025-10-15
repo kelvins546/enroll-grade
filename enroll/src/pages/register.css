@@ -9,7 +9,7 @@
 }
 
 .mainContent {
-  text-align: center;
+  text-align: left;
   align-items: center;
 }
 
@@ -39,6 +39,7 @@
   color: black;
   padding-top: 20px;
 }
+
 .registrationBox {
   width: 1300px;
   height: auto;
@@ -53,8 +54,14 @@
 }
 
 .back {
-  height: Auto;
-  width: 70px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  line-height: 32px;
+  padding: 0;
+  margin: 0 0 8px 0;
+  width: auto;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -67,8 +74,17 @@
   transition: 0.2s;
 }
 
-.backButton {
-  margin-right: 5px;
+.back .backButton,
+.back i.backButton {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.registrationBox > .back {
+  align-self: flex-start;
 }
 
 .registrationFullName label,
@@ -184,7 +200,7 @@
   font-size: 16px;
 }
 
-/*Phase 2 - OTP*/
+/* Phase 2 - OTP */
 
 .otpBox {
   width: 500px;
@@ -197,6 +213,13 @@
   text-align: center;
   flex-direction: column;
   padding: 20px;
+}
+
+/* Normalize headings to avoid extra top offset near Back link inside modal */
+.otpBox h2,
+.verifiedBox h2,
+.registerBackground h2 {
+  margin-top: 0;
 }
 
 .otpBox h2 {
@@ -400,6 +423,7 @@
     margin-top: 20px;
   }
 }
+
 @media (max-width: 900px) {
   .registrationEmail {
     width: 100% !important;
@@ -407,6 +431,7 @@
     min-width: 0;
   }
 }
+
 @media (max-width: 600px) {
   .registrationEmail {
     width: 100vw !important;
@@ -414,4 +439,14 @@
     min-width: 0;
     font-size: 14px;
   }
+}
+
+.otpBox .back,
+.verifiedBox .back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  line-height: 28px;
+  margin: 0 0 8px 0;
 }

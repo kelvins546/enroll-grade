@@ -10,9 +10,33 @@ export const Navigation_Bar = ({
     return (
       <div className="nav-bar">
         <div className="navigation-bar">
-          <span className="nav-item">Enrollment</span>
-          <span className="nav-item">Schedule</span>
-          <span className="nav-item">Grades</span>
+          <NavLink
+            to="/Student_Homepage"
+            className={({ isActive }) =>
+              isActive ? 'nav-item active' : 'nav-item'
+            }
+            style={{ textDecoration: 'none' }}
+          >
+            Enrollment
+          </NavLink>
+          <NavLink
+            to="/Student_Schedule"
+            className={({ isActive }) =>
+              isActive ? 'nav-item active' : 'nav-item'
+            }
+            style={{ textDecoration: 'none' }}
+          >
+            Schedule
+          </NavLink>
+          <NavLink
+            to="/Student_Grades"
+            className={({ isActive }) =>
+              isActive ? 'nav-item active' : 'nav-item'
+            }
+            style={{ textDecoration: 'none' }}
+          >
+            Grades
+          </NavLink>
         </div>
       </div>
     );

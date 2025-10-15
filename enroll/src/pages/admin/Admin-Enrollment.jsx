@@ -328,7 +328,10 @@ export const Admin_Enrollment = () => {
           school_year: enrollmentData.school_year,
           grade_level: enrollmentData.grade_level,
           enrollment_id: enrollment_id,
+          lrn: studentData.lrn || '', // ADDED: Student ID for template {{lrn}}
+          password: studentData.last_name || '', // ADDED: Password for template {{password}}
         };
+
         try {
           await emailjs.send(
             'service_q1ngnvg',

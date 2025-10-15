@@ -12,7 +12,10 @@ import { Admin_Scheduling } from './pages/admin/Admin-Scheduling';
 import { Admin_Grades } from './pages/admin/Admin-Grades';
 import { Admin_Manage } from './pages/admin/Admin-Manage';
 import { Admin_Analytics } from './pages/admin/Admin-Analytics';
-
+import { Student_Homepage } from './pages/student/Student_Homepage';
+import { Student_Schedule } from './pages/student/Student_Schedule';
+import { Student_Grades } from './pages/student/Student_Grades';
+import { Student_Enrollment } from './pages/student/Student_Enrollment';
 function App() {
   return (
     <Routes>
@@ -26,7 +29,12 @@ function App() {
         <Route path="Applicant_Enroll1" element={<Applicant_Enroll1 />} />
         <Route path="Applicant_Profile" element={<Applicant_Profile />} />
       </Route>
-
+      <Route element={<ProtectedRoute allowRoles={['student']} />}>
+        <Route path="/Student_Homepage" element={<Student_Homepage />} />
+        <Route path="/Student_Schedule" element={<Student_Schedule />} />
+        <Route path="/Student_Grades" element={<Student_Grades />} />
+        <Route path="/Student_Enrollment" element={<Student_Enrollment />} />
+      </Route>
       <Route
         element={<ProtectedRoute allowRoles={['super_admin', 'principal']} />}
       >

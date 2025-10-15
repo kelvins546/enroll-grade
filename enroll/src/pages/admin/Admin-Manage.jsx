@@ -14,6 +14,7 @@ export const Admin_Manage = () => {
   });
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sort, setSort] = useState({ by: 'role', order: 'asc' });
+  const [showConfirmReactivate, setShowConfirmReactivate] = useState(false);
 
   // Data and UI state
   const [users, setUsers] = useState([]);
@@ -28,6 +29,7 @@ export const Admin_Manage = () => {
   const startIdx = (page - 1) * pageSize;
   const endIdx = Math.min(startIdx + pageSize, totalRows);
   const pageRows = users.slice(startIdx, endIdx); // client-side slice
+  const [showReactivateNotif, setShowReactivateNotif] = useState(false);
 
   useEffect(() => {
     setPage((p) => Math.min(Math.max(1, p), totalPages));
@@ -61,6 +63,7 @@ export const Admin_Manage = () => {
 
   // Selection
   const [selectedIds, setSelectedIds] = useState([]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Modals
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
@@ -80,6 +83,14 @@ export const Admin_Manage = () => {
     confirm_password: '',
     email: '',
   });
+  useEffect(() => {
+    if (showDeleteNotif) {
+      const timer = setTimeout(() => {
+        setShowDeleteNotif(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showDeleteNotif]);
 
   // Debounce search input
   useEffect(() => {
@@ -153,7 +164,14 @@ export const Admin_Manage = () => {
     return () => {
       cancelled = true;
     };
-  }, [debouncedSearch, filters.role, filters.status, sort.by, sort.order]);
+  }, [
+    debouncedSearch,
+    filters.role,
+    filters.status,
+    sort.by,
+    sort.order,
+    refreshKey,
+  ]);
 
   const allSelected = useMemo(
     () => users.length > 0 && selectedIds.length === users.length,
@@ -174,7 +192,6 @@ export const Admin_Manage = () => {
     setShowConfirmDelete(true);
   };
 
-  // Soft delete => set is_active = false
   const handleDelete = async () => {
     try {
       if (selectedIds.length === 0) return;
@@ -185,7 +202,7 @@ export const Admin_Manage = () => {
       if (error) throw error;
       setShowConfirmDelete(false);
       setShowDeleteNotif(true);
-      setFilters((f) => ({ ...f })); // refetch
+      setRefreshKey((k) => k + 1); // triggers reload
     } catch (e) {
       console.error(e);
     }
@@ -230,10 +247,25 @@ export const Admin_Manage = () => {
       console.error(e);
     }
   };
+  const handleReactivate = async (userId) => {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ is_active: true })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      setShowReactivateNotif(true);
+
+      setRefreshKey((k) => k + 1); // refresh user list
+    } catch (e) {
+      console.error('Reactivate failed', e);
+    }
+  };
 
   return (
     <>
-      <Header />
+      <Header userRole="admin" />
       <Navigation_Bar userRole="super_admin" />
       <div className="userManagementContainer">
         <h2>Manage Users</h2>
@@ -293,16 +325,65 @@ export const Admin_Manage = () => {
                     onChange={(e) => toggleSelectAll(e.target.checked)}
                   />
                   <label>Select All</label>
-                  <i
-                    className="fa fa-trash"
-                    aria-hidden="true"
+
+                  {/* Reactivate icon + text */}
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      selectedIds.length > 0 && setShowConfirmReactivate(true)
+                    }
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ')
+                        setShowConfirmReactivate(true);
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      marginRight: 12,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    aria-label="Reactivate selected users"
+                    title="Reactivate selected users"
+                  >
+                    <i
+                      className="fa fa-repeat"
+                      aria-hidden="true"
+                      style={{ color: 'green' }}
+                    />
+                    <span>Reactivate</span>
+                  </span>
+
+                  {/* Deactivate icon + text */}
+                  <span
+                    role="button"
+                    tabIndex={0}
                     onClick={() =>
                       selectedIds.length > 0 && setShowConfirmDelete(true)
                     }
-                  ></i>
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ')
+                        setShowConfirmDelete(true);
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      color: 'gray',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                    }}
+                    aria-label="Deactivate selected users"
+                    title="Deactivate selected users"
+                  >
+                    <i className="fa fa-archive" aria-hidden="true" />
+
+                    <span>Deactivate</span>
+                  </span>
                 </>
               )}
             </div>
+
             <div className="userManageBtns">
               <button onClick={() => setShowAddUser(true)}>Add New User</button>
               <button
@@ -336,7 +417,7 @@ export const Admin_Manage = () => {
                   <th scope="col">#</th>
                   <th scope="col">Name</th>
                   <th scope="col">Role</th>
-                  <th scope="col">Department / Level</th>
+
                   <th scope="col">Status</th>
                   <th scope="col">Actions</th>
                 </tr>
@@ -357,15 +438,18 @@ export const Admin_Manage = () => {
                       <td>{index + 1}</td>
                       <td>{u.full_name}</td>
                       <td>{u.role}</td>
-                      <td>{u.department_or_level}</td>
+
                       <td>{u.status}</td>
                       <td className="actionButtons">
-                        <button>Edit</button>
+                        <button onClick={() => handleReactivate(u.user_id)}>
+                          Reactivate
+                        </button>
+
                         <button
                           className="removeBtn"
                           onClick={() => openRowDelete(u.user_id)}
                         >
-                          Remove
+                          deactivate
                         </button>
                       </td>
                     </tr>
@@ -473,7 +557,7 @@ export const Admin_Manage = () => {
           onClose={() => setShowConfirmDelete(false)}
         >
           <div className="deleteConfirmation">
-            <h2>Are you sure that you want to delete these users?</h2>
+            <h2>Are you sure that you want to deactivate these users?</h2>
             <div className="confirmDelBtn">
               <button
                 style={{
@@ -486,6 +570,23 @@ export const Admin_Manage = () => {
                 Cancel
               </button>
               <button onClick={handleDelete}>Confirm</button>
+            </div>
+          </div>
+        </ReusableModalBox>
+        <ReusableModalBox
+          show={showReactivateNotif}
+          onClose={() => setShowReactivateNotif(false)}
+        >
+          <div className="notif">
+            <div className="img" style={{ paddingTop: '10px' }}>
+              <img
+                src="checkImg.png"
+                style={{ height: '50px', width: '50px' }}
+              />
+            </div>
+            <div className="notifMessage">
+              <span>Account Reactivated </span>
+              <span>Successfully!</span>
             </div>
           </div>
         </ReusableModalBox>
@@ -505,10 +606,16 @@ export const Admin_Manage = () => {
             </div>
 
             <div className="addNewInputs">
-              <div className="addNewUserInput">
+              {/* Name fields */}
+              <fieldset className="addNewUserInput">
+                <legend>Personal Details</legend>
                 <div className="newUserInput">
-                  <label>Last Name</label>
+                  <label htmlFor="lastName">Last Name*</label>
                   <input
+                    id="lastName"
+                    autoComplete="family-name"
+                    required
+                    placeholder="Last name"
                     value={newUser.last_name}
                     onChange={(e) =>
                       setNewUser({ ...newUser, last_name: e.target.value })
@@ -516,8 +623,12 @@ export const Admin_Manage = () => {
                   />
                 </div>
                 <div className="newUserInput">
-                  <label>First Name</label>
+                  <label htmlFor="firstName">First Name*</label>
                   <input
+                    id="firstName"
+                    autoComplete="given-name"
+                    required
+                    placeholder="First name"
                     value={newUser.first_name}
                     onChange={(e) =>
                       setNewUser({ ...newUser, first_name: e.target.value })
@@ -525,8 +636,11 @@ export const Admin_Manage = () => {
                   />
                 </div>
                 <div className="newUserInput">
-                  <label>Middle Name</label>
+                  <label htmlFor="middleName">Middle Name</label>
                   <input
+                    id="middleName"
+                    autoComplete="additional-name"
+                    placeholder="Middle name"
                     value={newUser.middle_name}
                     onChange={(e) =>
                       setNewUser({ ...newUser, middle_name: e.target.value })
@@ -534,21 +648,31 @@ export const Admin_Manage = () => {
                   />
                 </div>
                 <div className="newUserInput">
-                  <label>Suffix</label>
+                  <label htmlFor="suffix">Suffix</label>
                   <input
+                    id="suffix"
+                    autoComplete="honorific-suffix"
                     className="suffix"
+                    placeholder="Jr., Sr., III"
                     value={newUser.suffix}
                     onChange={(e) =>
                       setNewUser({ ...newUser, suffix: e.target.value })
                     }
                   />
                 </div>
-              </div>
+              </fieldset>
 
-              <div className="addNewUserInput">
+              {/* Account fields */}
+              <fieldset className="addNewUserInput">
+                <legend>Account Details</legend>
                 <div className="newUserInput">
-                  <label>Email</label>
+                  <label htmlFor="email">Email*</label>
                   <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    placeholder="Official email address"
                     value={newUser.email}
                     onChange={(e) =>
                       setNewUser({ ...newUser, email: e.target.value })
@@ -556,24 +680,37 @@ export const Admin_Manage = () => {
                   />
                 </div>
                 <div className="newUserInput">
-                  <label>Select Role</label>
+                  <label htmlFor="role">Select Role*</label>
                   <select
+                    id="role"
+                    required
                     value={newUser.role}
                     onChange={(e) =>
                       setNewUser({ ...newUser, role: e.target.value })
                     }
                   >
-                    <option>Student</option>
-                    <option>Teacher</option>
+                    <option value="">Select Role</option>
+                    <option value="teacher">Teacher</option>
+
+                    <option value="dept_head">Department Head</option>
+                    <option value="principal">Principal</option>
+                    <option value="super_admin">Super Admin</option>
                   </select>
                 </div>
-              </div>
+              </fieldset>
 
-              <div className="addNewUserInput">
+              {/* Password fields */}
+              <fieldset className="addNewUserInput">
+                <legend>Password</legend>
                 <div className="newUserInput">
-                  <label>Password</label>
+                  <label htmlFor="password">Password*</label>
                   <input
+                    id="password"
                     type="password"
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    placeholder="Password"
                     value={newUser.password}
                     onChange={(e) =>
                       setNewUser({ ...newUser, password: e.target.value })
@@ -581,9 +718,14 @@ export const Admin_Manage = () => {
                   />
                 </div>
                 <div className="newUserInput">
-                  <label>Confirm Password</label>
+                  <label htmlFor="confirmPassword">Confirm Password*</label>
                   <input
+                    id="confirmPassword"
                     type="password"
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    placeholder="Retype password"
                     value={newUser.confirm_password}
                     onChange={(e) =>
                       setNewUser({
@@ -593,7 +735,7 @@ export const Admin_Manage = () => {
                     }
                   />
                 </div>
-              </div>
+              </fieldset>
             </div>
 
             <div className="createAccountButton">
@@ -656,7 +798,7 @@ export const Admin_Manage = () => {
               />
             </div>
             <div className="notifMessage">
-              <span>Account Deleted </span>
+              <span>Account Deactivated </span>
               <span>Successfully!</span>
             </div>
           </div>

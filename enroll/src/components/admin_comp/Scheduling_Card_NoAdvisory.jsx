@@ -1,27 +1,27 @@
-// src/components/admin_comp/Scheduling_Card_Gr8.jsx
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ReusableModalBox } from '../../components/modals/Reusable_Modal';
 import './scheduling_card.css';
 import { supabase } from '../../supabaseClient';
 
-// Weekly-fixed slots
+// Weekly-fixed slots (Mon–Thu label, Fri label, and storage key)
 const scheduleRows = [
   ['6:00 - 6:45', '6:00 - 6:40', '6:00-6:45'],
   ['6:45 - 7:30', '6:40 - 7:20', '6:45-7:30'],
   ['7:30 - 8:15', '7:20 - 8:00', '7:30-8:15'],
   ['8:15 - 9:00', '8:00 - 8:40', '8:15-9:00'],
-  ['9:00 - 9:20', '8:40 - 9:00', '8:40-9:00'], // Recess
+  ['9:00 - 9:20', '8:40 - 9:00', '8:40-9:00'], // Recess (exclude in this card)
   ['9:20 - 10:05', '9:00 - 9:40', '9:00-9:20'],
   ['10:05 - 10:50', '9:40 - 10:20', '9:20-10:05'],
   ['10:50 - 11:35', '10:20 - 11:00', '10:05-10:50'],
   ['11:35 - 12:20', '11:00 - 11:40', '10:50-11:35'],
-  ['', '11:40 - 12:20', '11:35-12:20'], // HGP
+  ['', '11:40 - 12:20', '11:35-12:20'], // HGP (exclude in this card)
 ];
 
-const RECESS_SLOT_KEY = '8:40-9:00';
-const HGP_SLOT_KEY = '11:35-12:20';
+// Exclude Recess and HGP rows in this view
+const excludedKeys = new Set(['8:40-9:00', '11:35-12:20']);
+const visibleRows = scheduleRows.filter(([, , key]) => !excludedKeys.has(key));
 
-export const Scheduling_Card_Gr8 = ({
+export const Scheduling_Card_NoAdvisory = ({
   search = '',
   subjectId = '',
   sectionId = '',
@@ -31,11 +31,14 @@ export const Scheduling_Card_Gr8 = ({
   const [showSuccessNotif, setShowSuccessNotif] = useState(false);
   const [activeTeacherId, setActiveTeacherId] = useState(null);
 
-  const [teachersGr8, setTeachersGr8] = useState([]);
+  // Non-advisory teachers across all grades
+  const [teachers, setTeachers] = useState([]); // teacher rows with department + user
+  const [teacherGrades, setTeacherGrades] = useState({}); // { teacher_id: number[] }
   const [sectionsPerTeacher, setSectionsPerTeacher] = useState({});
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState('');
 
+  // DnD
   const onDragStart = (event, timeKey) => {
     event.dataTransfer.setData('sectionKey', timeKey);
     event.dataTransfer.effectAllowed = 'move';
@@ -45,7 +48,6 @@ export const Scheduling_Card_Gr8 = ({
     event.preventDefault();
     const dragKey = event.dataTransfer.getData('sectionKey');
     if (!dragKey || dragKey === dropKey || !activeTeacherId) return;
-
     setSectionsPerTeacher((prev) => {
       const map = { ...prev };
       const current = map[activeTeacherId] || {};
@@ -58,130 +60,149 @@ export const Scheduling_Card_Gr8 = ({
     });
   };
 
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setErrMsg('');
-
-      const sec = sectionId ? Number(sectionId) : null;
-
-      // Advisory-only Grade 8 teachers via INNER JOIN on advisory_section
-      let adv = supabase
-        .from('teachers')
-        .select(
-          `
-          teacher_id,
-          advisory_section:sections!teachers_advisory_section_id_fkey!inner(section_id, name, grade_level),
-          department:departments(name, code),
-          user:users(first_name, last_name),
-          position, degree, major, minor, post_grad, course, is_active
-        `
-        )
-        .eq('advisory_section.grade_level', 8);
-      if (sec) adv = adv.eq('advisory_section.section_id', sec);
-
-      const { data: teachers, error: tErr } = await adv;
-      if (tErr) throw tErr;
-
-      const teacherIds = (teachers || []).map((t) => t.teacher_id);
-
-      // Seed weekly map with dynamic HGP text from advisory section
-      const blankWeekly = () =>
-        Object.fromEntries(scheduleRows.map(([, , k]) => [k, '']));
-      const seeded = {};
-      (teachers || []).forEach((t) => {
-        const m = blankWeekly();
-        m[RECESS_SLOT_KEY] = 'Recess';
-        const advisory =
-          Number(t?.advisory_section?.grade_level) === 8 &&
-          t?.advisory_section?.name
-            ? t.advisory_section.name
-            : '—';
-        m[HGP_SLOT_KEY] = `HGP - ${advisory}`;
-        seeded[t.teacher_id] = m;
-      });
-
-      // Hydrate from teacher_schedules (skip HGP to keep dynamic label)
-      if (teacherIds.length) {
-        const { data: schedRows, error: sErr } = await supabase
-          .from('teacher_schedules')
-          .select('teacher_id, slot_key, section_name')
-          .in('teacher_id', teacherIds);
-        if (sErr) throw sErr;
-
-        (schedRows || []).forEach(({ teacher_id, slot_key, section_name }) => {
-          if (!seeded[teacher_id]) seeded[teacher_id] = blankWeekly();
-          if (slot_key === HGP_SLOT_KEY) return; // keep dynamic HGP
-          seeded[teacher_id][slot_key] = section_name || '';
-        });
-      }
-
-      setTeachersGr8(teachers || []);
-      setSectionsPerTeacher(seeded);
-    } catch (e) {
-      console.error(e);
-      setErrMsg('Failed to load Grade 8 teachers.');
-    } finally {
-      setLoading(false);
-    }
-  }, [sectionId]);
-
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      if (!mounted) return;
-      await loadData();
-    })();
+
+    const load = async () => {
+      try {
+        setLoading(true);
+        setErrMsg('');
+
+        // Optional narrowing by subject/section from teacher_subjects
+        let ts = supabase.from('teacher_subjects').select(`
+            teacher_id,
+            subject_id,
+            section_id,
+            section:sections(grade_level, name)
+          `);
+        if (subjectId) ts = ts.eq('subject_id', Number(subjectId));
+        if (sectionId) ts = ts.eq('section_id', Number(sectionId));
+        const { data: teachSec, error: tsErr } = await ts;
+        if (tsErr) throw tsErr; // server-side narrowing using eq() filters
+
+        // Candidate teacher_ids (or empty list if no TS rows)
+        const candidateIds = Array.from(
+          new Set((teachSec || []).map((r) => r.teacher_id))
+        );
+
+        // Fetch only teachers with no advisory (advisory_section_id IS NULL)
+        let tQuery = supabase
+          .from('teachers')
+          .select(
+            `
+            teacher_id,
+            position,
+            degree,
+            major,
+            minor,
+            post_grad,
+            course,
+            is_active,
+            department:departments(name, code),
+            user:users(first_name, last_name)
+          `
+          )
+          .is('advisory_section_id', null);
+        if (candidateIds.length) tQuery = tQuery.in('teacher_id', candidateIds);
+        const { data: tRows, error: tErr } = await tQuery;
+        if (tErr) throw tErr; // select + is()/in() per Supabase docs
+
+        const nonAdvisoryIds = (tRows || []).map((t) => t.teacher_id);
+
+        // Build map of taught grades per teacher from teachSec
+        const gradesMap = {};
+        (teachSec || []).forEach(({ teacher_id, section }) => {
+          if (!nonAdvisoryIds.includes(teacher_id)) return;
+          const g = Number(section?.grade_level);
+          if (!Number.isFinite(g)) return;
+          if (!gradesMap[teacher_id]) gradesMap[teacher_id] = new Set();
+          gradesMap[teacher_id].add(g);
+        });
+
+        // Seed weekly map per teacher with visible slot keys only (no Recess/HGP labels)
+        const blankWeekly = () =>
+          Object.fromEntries(visibleRows.map(([, , k]) => [k, '']));
+        const seeded = {};
+        (tRows || []).forEach((t) => {
+          const m = blankWeekly();
+          seeded[t.teacher_id] = m;
+        });
+
+        // Hydrate from teacher_schedules for these teachers
+        if (nonAdvisoryIds.length) {
+          const { data: schedRows, error: sErr } = await supabase
+            .from('teacher_schedules')
+            .select('teacher_id, slot_key, section_name')
+            .in('teacher_id', nonAdvisoryIds);
+          if (sErr) throw sErr;
+
+          (schedRows || []).forEach(
+            ({ teacher_id, slot_key, section_name }) => {
+              if (!seeded[teacher_id]) return;
+              if (excludedKeys.has(slot_key)) return; // ignore Recess/HGP persists for this view
+              seeded[teacher_id][slot_key] = section_name || '';
+            }
+          );
+        }
+
+        if (mounted) {
+          setTeachers(tRows || []);
+          setSectionsPerTeacher(seeded);
+          // Convert sets to arrays for render
+          const asObj = {};
+          Object.entries(gradesMap).forEach(([tid, set]) => {
+            asObj[tid] = Array.from(set).sort((a, b) => a - b);
+          });
+          setTeacherGrades(asObj);
+        }
+      } catch (e) {
+        console.error(e);
+        if (mounted) setErrMsg('Failed to load non-advisory teachers.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    load();
     return () => {
       mounted = false;
     };
-  }, [loadData]);
+  }, [subjectId, sectionId]); // refetch when server-side filters change
 
   const openModalFor = (teacher_id) => {
     setActiveTeacherId(teacher_id);
     setShowEditModal(true);
   };
 
-  const activeTeacher = useMemo(
-    () => teachersGr8.find((t) => t.teacher_id === activeTeacherId) || null,
-    [teachersGr8, activeTeacherId]
-  );
-
   const teacherName = (t) =>
     `${t?.user?.first_name || ''} ${t?.user?.last_name || ''}`.trim() || '—';
   const deptName = (t) => t?.department?.name || '—';
-  const advisoryName = (t) =>
-    Number(t?.advisory_section?.grade_level) === 8 && t?.advisory_section?.name
-      ? t.advisory_section.name
-      : '—';
+  const gradesList = (teacher_id) => {
+    const arr = teacherGrades[teacher_id] || [];
+    return arr.length ? `G${arr.join(', G')}` : '—';
+  };
 
+  // Client-side department + name filter
   const filteredTeachers = useMemo(() => {
     const q = (search || '').trim().toLowerCase();
-    return (teachersGr8 || []).filter((t) => {
+    return (teachers || []).filter((t) => {
       const matchesDept =
         selectedDept === 'all' ||
         (t?.department?.code && t.department.code === selectedDept) ||
         (t?.department?.name && t.department.name === selectedDept);
       if (!matchesDept) return false;
-
       if (!q) return true;
       const full =
         `${t?.user?.first_name || ''} ${t?.user?.last_name || ''}`.toLowerCase();
       return full.includes(q);
     });
-  }, [teachersGr8, search, selectedDept]); // client filter
+  }, [teachers, search, selectedDept]);
 
   const handleUpdate = async () => {
     try {
       const current = sectionsPerTeacher[activeTeacherId] || {};
       const rows = Object.entries(current)
-        .filter(
-          ([key, section]) =>
-            section &&
-            key !== RECESS_SLOT_KEY &&
-            key !== HGP_SLOT_KEY &&
-            !String(section).startsWith('HGP')
-        )
+        .filter(([, section]) => !!section) // no special cases needed since Recess/HGP absent
         .map(([slot_key, section_name]) => ({
           teacher_id: activeTeacherId,
           slot_key,
@@ -205,9 +226,9 @@ export const Scheduling_Card_Gr8 = ({
   if (loading) {
     return (
       <div className="faculty-card">
-        <div className="faculty_card_header_grade8"></div>
+        <div className="faculty_card_header_grade7"></div>
         <div className="faculty-card-body">
-          <p>Loading Grade 8 teachers…</p>
+          <p>Loading faculty without advisory…</p>
         </div>
       </div>
     );
@@ -216,7 +237,7 @@ export const Scheduling_Card_Gr8 = ({
   if (errMsg) {
     return (
       <div className="faculty-card">
-        <div className="faculty_card_header_grade8"></div>
+        <div className="faculty_card_header_grade7"></div>
         <div className="faculty-card-body">
           <p>{errMsg}</p>
         </div>
@@ -227,9 +248,9 @@ export const Scheduling_Card_Gr8 = ({
   if (!filteredTeachers.length) {
     return (
       <div className="faculty-card">
-        <div className="faculty_card_header_grade8"></div>
+        <div className="faculty_card_header_grade7"></div>
         <div className="faculty-card-body">
-          <p>No Grade 8 teachers found.</p>
+          <p>No non-advisory teachers found.</p>
         </div>
       </div>
     );
@@ -244,7 +265,7 @@ export const Scheduling_Card_Gr8 = ({
           const getValue = (k) => weekly[k] || '';
           return (
             <div key={t.teacher_id} className="faculty-card">
-              <div className="faculty_card_header_grade8"></div>
+              <div className="faculty_card_header_noadvisory"></div>
 
               <div className="faculty-card-body">
                 <h3>Name: {teacherName(t)}</h3>
@@ -252,42 +273,13 @@ export const Scheduling_Card_Gr8 = ({
                   <strong>Department:</strong> {deptName(t)}
                 </p>
                 <p>
-                  <strong>Advisory Class:</strong> {advisoryName(t)}
+                  <strong>Advisory Class:</strong> —
                 </p>
                 <p>
-                  <strong>Grade:</strong> 8
+                  <strong>Grades:</strong> {gradesList(t.teacher_id)}
                 </p>
 
-                <div className="faculty-details">
-                  <div>
-                    <p>
-                      <strong>Degree:</strong> {t.degree || '—'}
-                    </p>
-                    <p>
-                      <strong>Major:</strong> {t.major || '—'}
-                    </p>
-                    <p>
-                      <strong>Minor:</strong> {t.minor || '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p>
-                      <strong>Post Grad:</strong> {t.post_grad || '—'}
-                    </p>
-                    <p>
-                      <strong>Course:</strong> {t.course || '—'}
-                    </p>
-                  </div>
-                </div>
-
-                <p>
-                  <strong>Teaching load per week:</strong> —
-                </p>
-                <p>
-                  <strong>Position:</strong> {t.position || '—'}
-                </p>
-
-                {/* Preview: first 2 time slots */}
+                {/* Preview: only first 2 visible time slots */}
                 <table className="faculty-schedule">
                   <thead>
                     <tr>
@@ -298,7 +290,7 @@ export const Scheduling_Card_Gr8 = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {scheduleRows
+                    {visibleRows
                       .slice(0, 2)
                       .map(([monThuTime, _friTime, key]) => (
                         <tr key={key}>
@@ -314,7 +306,7 @@ export const Scheduling_Card_Gr8 = ({
                 <div className="buttonContainerCard">
                   <button
                     className="edit-btn"
-                    onClick={() => openModalFor(t.teacher_id)}
+                    onClick={() => setShowEditModal(true)}
                   >
                     Edit
                   </button>
@@ -325,46 +317,41 @@ export const Scheduling_Card_Gr8 = ({
         })}
       </div>
 
-      {/* Edit modal */}
+      {/* Edit modal (weekly-fixed, Recess/HGP removed) */}
       <ReusableModalBox
         show={showEditModal}
         onClose={() => setShowEditModal(false)}
       >
         <div className="scheduduleEdit">
-          <div className="faculty_card_header_grade8"></div>
-          <div className="scheduleEditBody">
-            <h3>Name: {teacherName(activeTeacher)}</h3>
-            <p>
-              <strong>Department:</strong> {deptName(activeTeacher)}
-            </p>
-            <p>
-              <strong>Advisory Class:</strong> {advisoryName(activeTeacher)}
-            </p>
-            <p>
-              <strong>Grade:</strong> 8
-            </p>
+          <div className="faculty_card_header_noadvisory"></div>
 
-            <div className="facultyEditData">
-              <div>
-                <p>
-                  <strong>Degree:</strong> {activeTeacher?.degree || '—'}
-                </p>
-                <p>
-                  <strong>Major:</strong> {activeTeacher?.major || '—'}
-                </p>
-                <p>
-                  <strong>Minor:</strong> {activeTeacher?.minor || '—'}
-                </p>
-              </div>
-              <div>
-                <p>
-                  <strong>Post Grad:</strong> {activeTeacher?.post_grad || '—'}
-                </p>
-                <p>
-                  <strong>Course:</strong> {activeTeacher?.course || '—'}
-                </p>
-              </div>
-            </div>
+          <div className="scheduleEditBody">
+            <h3>
+              Name:{' '}
+              {(() => {
+                const t = teachers.find(
+                  (x) => x.teacher_id === activeTeacherId
+                );
+                return t
+                  ? `${t?.user?.first_name || ''} ${t?.user?.last_name || ''}`.trim()
+                  : '—';
+              })()}
+            </h3>
+            <p>
+              <strong>Department:</strong>{' '}
+              {(() => {
+                const t = teachers.find(
+                  (x) => x.teacher_id === activeTeacherId
+                );
+                return t?.department?.name || '—';
+              })()}
+            </p>
+            <p>
+              <strong>Advisory Class:</strong> —
+            </p>
+            <p>
+              <strong>Grades:</strong> {gradesList(activeTeacherId)}
+            </p>
 
             <p className="p-text">Drag Section name to re-arrange schedule</p>
 
@@ -377,43 +364,24 @@ export const Scheduling_Card_Gr8 = ({
                 </tr>
               </thead>
               <tbody>
-                {scheduleRows.map(([monThuTime, friTime, key]) => {
+                {visibleRows.map(([monThuTime, friTime, key]) => {
                   const weekly = sectionsPerTeacher[activeTeacherId] || {};
                   const value = weekly[key] || '';
-                  const isRecess =
-                    key === RECESS_SLOT_KEY || value === 'Recess';
-                  const isHGP =
-                    key === HGP_SLOT_KEY || String(value).startsWith('HGP');
                   return (
                     <tr key={key}>
                       <td>{monThuTime}</td>
                       <td>{friTime}</td>
                       <td
-                        draggable={!!value && !isRecess && !isHGP}
+                        draggable={!!value}
                         onDragStart={
-                          !isRecess && !isHGP
-                            ? (e) => onDragStart(e, key)
-                            : undefined
+                          value ? (e) => onDragStart(e, key) : undefined
                         }
-                        onDrop={
-                          !isRecess && !isHGP
-                            ? (e) => onDrop(e, key)
-                            : undefined
-                        }
-                        onDragOver={
-                          !isRecess && !isHGP ? onDragOver : undefined
-                        }
+                        onDrop={(e) => onDrop(e, key)}
+                        onDragOver={onDragOver}
                         style={{
-                          cursor:
-                            !value || isRecess || isHGP ? 'default' : 'move',
+                          cursor: !value ? 'default' : 'move',
                           userSelect: 'none',
-                          backgroundColor: isRecess
-                            ? '#d4edda'
-                            : isHGP
-                              ? '#e2e3e5'
-                              : 'white',
-                          color: isHGP ? '#333' : 'inherit',
-                          fontWeight: isRecess || isHGP ? 600 : 400,
+                          backgroundColor: 'white',
                           textAlign: 'center',
                           padding: '5px',
                         }}

@@ -1,755 +1,1143 @@
-import './enrollment.css';
+import './admin_placement.css';
 import { Header } from '../../components/Header';
 import { Navigation_Bar } from '../../components/NavigationBar';
-import { Confirmation_Modal } from '../../components/modals/Confirmation_Modal';
-import { useEffect, useMemo, useState } from 'react';
+import { Sub_Nav } from '../../components/SubNav';
+import { useState, useEffect, useMemo } from 'react';
+import { ReusableModalBox } from '../../components/modals/Reusable_Modal';
+import { ReusableConfirmationModalBox } from '../../components/modals/Reusable_Confirmation_Modal';
 import { supabase } from '../../supabaseClient';
-import emailjs from 'emailjs-com';
-import { ImageModal } from '../../components/modals/ImageModal';
 
-const GRADES = ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10'];
-const normalizeSY = (s) => (s || '').replace(/[–—−]/g, '-').trim();
+const GRADES = [
+  { label: 'Grade 7', value: 7 },
+  { label: 'Grade 8', value: 8 },
+  { label: 'Grade 9', value: 9 },
+  { label: 'Grade 10', value: 10 },
+];
 
-export const Admin_Enrollment = () => {
-  const [modalImage, setModalImage] = useState(null);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [confirmPayload, setConfirmPayload] = useState({
-    type: 'single',
-    ids: [],
-  });
+export const Admin_Placement = () => {
+  // Modals
+  const [showModal, setShowModal] = useState(false);
+  const [showOverrideSection, setShowOverrideSection] = useState(false);
+  const [showOverrideStudent, setShowOverrideStudent] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [showApplySection, setShowApplySection] = useState(false);
+  const [showApplyStudent, setShowApplyStudent] = useState(false);
+  const [showApplyNotif, setShowApplyNotif] = useState(false);
+  const [showAddNotif, setShowAddNotif] = useState(false);
+  const [notifMessage, setNotifMessage] = useState(
+    'Changes Applied Successfully!'
+  );
 
-  const [schoolYear, setSchoolYear] = useState('2025-2026');
-  const [searchText, setSearchText] = useState('');
-  const [dateSort, setDateSort] = useState('Newest');
-  const [gradeFilter, setGradeFilter] = useState('');
-  const [genderFilter, setGenderFilter] = useState('');
-  const [docCompleteOnly, setDocCompleteOnly] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [totalEnrolled, setTotalEnrolled] = useState(0);
-  const [rows, setRows] = useState([]);
-  const [selected, setSelected] = useState(new Set());
-  const [loading, setLoading] = useState(false);
-  const [modalBusy, setModalBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  // Nav
+  const [activeSection, setActiveSection] = useState('sectionList');
 
-  const [docsByStudent, setDocsByStudent] = useState(new Map());
-  const [studentByApplicant, setStudentByApplicant] = useState(new Map());
+  // Filters and search (sections)
+  const [sectionSearch, setSectionSearch] = useState('');
+  const [sectionListGrade, setSectionListGrade] = useState('');
+  // NEW: star section filter
+  const [sectionStarFilter, setSectionStarFilter] = useState(''); // '', 'yes', 'no'
 
-  const loadStats = async () => {
-    setError('');
+  // Filters and search (students)
+  const [studentSearch, setStudentSearch] = useState('');
+  const [studentListGrade, setStudentListGrade] = useState('');
+  const [studentListSection, setStudentListSection] = useState('');
+
+  // Data sets
+  const [sections, setSections] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [students, setStudents] = useState([]);
+
+  // Loading
+  const [loadingSections, setLoadingSections] = useState(false);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+
+  // For override selections
+  const [overrideSectionId, setOverrideSectionId] = useState(null);
+  const [overrideTeacherId, setOverrideTeacherId] = useState('');
+  const [overrideStudentId, setOverrideStudentId] = useState(null);
+  const [overrideTargetSectionName, setOverrideTargetSectionName] =
+    useState('');
+
+  // Fetch sections with embedded adviser (teacher -> user) + is_star
+  const loadSections = async () => {
+    setLoadingSections(true);
     try {
-      const sy = normalizeSY(schoolYear);
-      const { count: pend, error: ePend } = await supabase
-        .from('enrollments')
-        .select('enrollment_id', { count: 'exact', head: true })
-        .eq('school_year', sy)
-        .eq('status', 'pending');
-      if (ePend) throw ePend;
-      setPendingCount(pend || 0);
-
-      const { count: enrolledCount, error: eEnr } = await supabase
-        .from('enrollments')
-        .select('enrollment_id', { count: 'exact', head: true })
-        .eq('school_year', sy)
-        .eq('status', 'approved');
-      if (eEnr) throw eEnr;
-      setTotalEnrolled(enrolledCount || 0);
-    } catch {
-      setError('Failed to load stats.');
+      const { data, error } = await supabase
+        .from('sections')
+        .select(
+          `
+          section_id,
+          name,
+          grade_level,
+          adviser_id,
+          is_star,
+          adviser:teachers!sections_adviser_id_fkey(
+            teacher_id,
+            user:users!teachers_user_id_fkey(
+              first_name,
+              last_name
+            )
+          )
+        `
+        )
+        .order('name');
+      if (error) throw error;
+      setSections(data || []);
+    } catch (e) {
+      console.error('Failed to load sections:', e);
+      setSections([]);
+    } finally {
+      setLoadingSections(false);
     }
   };
 
-  const loadRows = async () => {
-    setLoading(true);
-    setError('');
+  // Fetch available teachers not yet advisers; attach display_name via users
+  const loadAvailableTeachers = async () => {
+    setLoadingTeachers(true);
     try {
-      const sy = normalizeSY(schoolYear);
-      let q = supabase
-        .from('enrollments')
-        .select(
-          'enrollment_id, applicant_id, school_year, grade_level, application_date, status, is_transferee'
-        )
-        .eq('school_year', sy);
+      const { data, error } = await supabase
+        .from('teachers')
+        .select('teacher_id, user_id, is_active, advisory_section_id')
+        .is('advisory_section_id', null)
+        .eq('is_active', true);
+      if (error) throw error;
 
-      if (dateSort === 'Newest')
-        q = q.order('application_date', { ascending: false });
-      if (dateSort === 'Oldest')
-        q = q.order('application_date', { ascending: true });
+      const teacherUserIds = (data || []).map((t) => t.user_id);
+      let nameByUser = new Map();
+      if (teacherUserIds.length) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('user_id, first_name, last_name')
+          .in('user_id', teacherUserIds);
+        nameByUser = new Map(
+          (users || []).map((u) => [
+            u.user_id,
+            `${u.first_name || ''} ${u.last_name || ''}`.trim(),
+          ])
+        );
+      }
+      const withNames = (data || []).map((t) => ({
+        ...t,
+        display_name: nameByUser.get(t.user_id) || `Teacher ${t.teacher_id}`,
+      }));
+      setTeachers(withNames);
+    } catch (e) {
+      console.error('Failed to load teachers:', e);
+      setTeachers([]);
+    } finally {
+      setLoadingTeachers(false);
+    }
+  };
 
-      const { data: enrollments, error: eEnr } = await q;
-      if (eEnr) throw eEnr;
+  // Fetch students and embed their section plus adviser; normalize a flat adviser_full_name
+  const loadStudents = async () => {
+    setLoadingStudents(true);
+    try {
+      const { data, error } = await supabase.from('students').select(`
+          student_id,
+          first_name,
+          last_name,
+          gender,
+          student_sections:student_sections(
+            section:sections(
+              name,
+              grade_level,
+              adviser:teachers!sections_adviser_id_fkey(
+                user:users!teachers_user_id_fkey(first_name, last_name)
+              )
+            )
+          )
+        `);
+      if (error) throw error;
 
-      if (!enrollments?.length) {
-        setRows([]);
-        setLoading(false);
-        setDocsByStudent(new Map());
-        setStudentByApplicant(new Map());
+      const normalized = (data || []).map((s) => {
+        const rel = Array.isArray(s.student_sections)
+          ? s.student_sections[0]
+          : s.student_sections;
+        const sec = rel?.section || null;
+        const advUser = sec?.adviser?.user || null;
+        return {
+          student_id: s.student_id,
+          first_name: s.first_name || '',
+          last_name: s.last_name || '',
+          gender: s.gender || '—',
+          grade_level:
+            typeof sec?.grade_level === 'number' ? sec.grade_level : '',
+          section: sec?.name || '',
+          adviser_full_name: advUser
+            ? `${advUser.first_name || ''} ${advUser.last_name || ''}`.trim()
+            : '',
+          is_star: false,
+        };
+      });
+
+      setStudents(normalized);
+    } catch (e) {
+      console.error('Failed to load students:', e);
+      setStudents([]);
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+  useEffect(() => {
+    loadSections();
+    loadAvailableTeachers();
+    loadStudents();
+  }, []);
+
+  // Derived filtering
+  const filteredSections = useMemo(() => {
+    const q = sectionSearch.trim().toLowerCase();
+    return sections.filter((s) => {
+      const matchesText = !q || s.name.toLowerCase().includes(q);
+      const matchesGrade =
+        !sectionListGrade || Number(s.grade_level) === Number(sectionListGrade);
+      const matchesStar =
+        sectionStarFilter === ''
+          ? true
+          : sectionStarFilter === 'yes'
+            ? !!s.is_star
+            : !s.is_star;
+      return matchesText && matchesGrade && matchesStar;
+    });
+  }, [sections, sectionSearch, sectionListGrade, sectionStarFilter]);
+
+  const filteredStudents = useMemo(() => {
+    const q = studentSearch.trim().toLowerCase();
+    return students.filter((s) => {
+      const full = `${s.first_name} ${s.last_name}`.trim().toLowerCase();
+      const matchesText = !q || full.includes(q);
+      const matchesGrade =
+        !studentListGrade || Number(s.grade_level) === Number(studentListGrade);
+      const matchesSection =
+        !studentListSection || s.section === studentListSection;
+      return matchesText && matchesGrade && matchesSection;
+    });
+  }, [students, studentSearch, studentListGrade, studentListSection]);
+
+  // Pagination (Sections)
+  const [pageSec, setPageSec] = useState(1);
+  const [pageSizeSec, setPageSizeSec] = useState(10);
+  const totalRowsSec = filteredSections.length;
+  const totalPagesSec = Math.max(1, Math.ceil(totalRowsSec / pageSizeSec));
+  const startIdxSec = (pageSec - 1) * pageSizeSec;
+  const endIdxSec = Math.min(startIdxSec + pageSizeSec, totalRowsSec);
+  const pageRowsSec = filteredSections.slice(startIdxSec, endIdxSec);
+  useEffect(() => {
+    setPageSec((p) => Math.min(Math.max(1, p), totalPagesSec));
+  }, [totalPagesSec]);
+  const MAX_PAGES = 5;
+  const getPageNumbersSec = () => {
+    if (totalPagesSec <= MAX_PAGES)
+      return Array.from({ length: totalPagesSec }, (_, i) => i + 1);
+    const half = Math.floor(MAX_PAGES / 2);
+    let start = Math.max(1, pageSec - half);
+    let end = Math.min(totalPagesSec, start + MAX_PAGES - 1);
+    if (end - start + 1 < MAX_PAGES) start = Math.max(1, end - MAX_PAGES + 1);
+    const list = [];
+    if (start > 1) {
+      list.push(1);
+      if (start > 2) list.push('…');
+    }
+    for (let i = start; i <= end; i++) list.push(i);
+    if (end < totalPagesSec) {
+      if (end < totalPagesSec - 1) list.push('…');
+      list.push(totalPagesSec);
+    }
+    return list;
+  };
+  const gotoPageSec = (n) =>
+    setPageSec(Math.min(Math.max(1, n), totalPagesSec));
+  const firstPageSec = () => gotoPageSec(1);
+  const prevPageSec = () => gotoPageSec(pageSec - 1);
+  const nextPageSec = () => gotoPageSec(pageSec + 1);
+  const lastPageSec = () => gotoPageSec(totalPagesSec);
+
+  // Pagination (Students)
+  const [pageStu, setPageStu] = useState(1);
+  const [pageSizeStu, setPageSizeStu] = useState(10);
+  const totalRowsStu = filteredStudents.length;
+  const totalPagesStu = Math.max(1, Math.ceil(totalRowsStu / pageSizeStu));
+  const startIdxStu = (pageStu - 1) * pageSizeStu;
+  const endIdxStu = Math.min(startIdxStu + pageSizeStu, totalRowsStu);
+  const pageRowsStu = filteredStudents.slice(startIdxStu, endIdxStu);
+  useEffect(() => {
+    setPageStu((p) => Math.min(Math.max(1, p), totalPagesStu));
+  }, [totalPagesStu]);
+  const getPageNumbersStu = () => {
+    if (totalPagesStu <= MAX_PAGES)
+      return Array.from({ length: totalPagesStu }, (_, i) => i + 1);
+    const half = Math.floor(MAX_PAGES / 2);
+    let start = Math.max(1, pageStu - half);
+    let end = Math.min(totalPagesStu, start + MAX_PAGES - 1);
+    if (end - start + 1 < MAX_PAGES) start = Math.max(1, end - MAX_PAGES + 1);
+    const list = [];
+    if (start > 1) {
+      list.push(1);
+      if (start > 2) list.push('…');
+    }
+    for (let i = start; i <= end; i++) list.push(i);
+    if (end < totalPagesStu) {
+      if (end < totalPagesStu - 1) list.push('…');
+      list.push(totalPagesStu);
+    }
+    return list;
+  };
+  const gotoPageStu = (n) =>
+    setPageStu(Math.min(Math.max(1, n), totalPagesStu));
+  const firstPageStu = () => gotoPageStu(1);
+  const prevPageStu = () => gotoPageStu(pageStu - 1);
+  const nextPageStu = () => gotoPageStu(pageStu + 1);
+  const lastPageStu = () => gotoPageStu(totalPagesStu);
+
+  // Shuffle helper
+  const shuffle = (arr) => {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  // Automate sectioning: random assign available teachers to sections without adviser
+  const automateSectioning = async () => {
+    try {
+      const targetSections = sections.filter((s) => !s.adviser_id);
+      if (targetSections.length === 0) {
+        setNotifMessage('No sections need advisers.');
+        setShowApplyNotif(true);
         return;
       }
-
-      const filteredEnrollments = (enrollments || []).filter(
-        (e) => e.status !== 'approved'
-      );
-      const appIds = filteredEnrollments.map((e) => e.applicant_id);
-
-      const { data: apps, error: eApps } = await supabase
-        .from('applicants')
-        .select('applicant_id, user_id')
-        .in('applicant_id', appIds);
-      if (eApps) throw eApps;
-
-      const { data: users, error: eUsers } = await supabase
-        .from('users')
-        .select('user_id, email, first_name, last_name, middle_name');
-      if (eUsers) throw eUsers;
-      const usersById = new Map((users || []).map((u) => [u.user_id, u]));
-
-      const { data: students, error: eStud } = await supabase
-        .from('students')
-        .select('student_id, applicant_id, lrn, gender, last_name');
-      if (eStud) throw eStud;
-      const studentApplicantMap = new Map(
-        (students || []).map((s) => [s.applicant_id, s])
-      );
-      setStudentByApplicant(studentApplicantMap);
-
-      const { data: docs, error: eDocs } = await supabase
-        .from('documents')
-        .select('student_id, document_type, file_path');
-      if (eDocs) throw eDocs;
-      const docsMap = new Map();
-      (docs || []).forEach((d) => {
-        const arr = docsMap.get(d.student_id) || [];
-        arr.push(d);
-        docsMap.set(d.student_id, arr);
-      });
-      setDocsByStudent(docsMap);
-
-      const built = filteredEnrollments.map((e) => {
-        const app = (apps || []).find((a) => a.applicant_id === e.applicant_id);
-        const user = app ? usersById.get(app.user_id) : null;
-        const stud = studentApplicantMap.get(e.applicant_id);
-
-        const studDocs = stud ? docsMap.get(stud.student_id) || [] : [];
-        const hasPSA = studDocs.some(
-          (d) => d.document_type === 'psa_birth_cert'
-        );
-        const hasCard = studDocs.some((d) => d.document_type === 'report_card');
-        const hasSF10 = studDocs.some((d) => d.document_type === 'sf10');
-
-        return {
-          enrollment_id: e.enrollment_id,
-          applicant_id: e.applicant_id,
-          date: e.application_date ? new Date(e.application_date) : null,
-          name: user
-            ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
-            : `Applicant ${e.applicant_id}`,
-          lrn: stud?.lrn || '—',
-          gender: stud?.gender || '—',
-          student_status: e.is_transferee ? 'Transferee' : 'New',
-          grade_level: e.grade_level,
-          hasPSA,
-          hasCard,
-          hasSF10,
-          complete: hasPSA && hasCard && hasSF10,
-          status: e.status || 'pending',
-          email: user?.email || '',
-        };
-      });
-
-      setRows(built);
-    } catch {
-      setError('Failed to load enrollment records.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadStats();
-  }, [schoolYear]);
-
-  useEffect(() => {
-    loadRows();
-  }, [schoolYear, dateSort]);
-
-  const toggleSelection = (applicant_id) => {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      if (s.has(applicant_id)) s.delete(applicant_id);
-      else s.add(applicant_id);
-      return s;
-    });
-  };
-
-  const allSelected = useMemo(() => {
-    const ids = rows
-      .filter((r) => r.status === 'pending')
-      .map((r) => r.applicant_id);
-    if (!ids.length) return false;
-    return ids.every((id) => selected.has(id));
-  }, [rows, selected]);
-
-  const toggleSelectAll = () => {
-    const ids = rows
-      .filter((r) => r.status === 'pending')
-      .map((r) => r.applicant_id);
-    setSelected((prev) => {
-      const s = new Set(prev);
-      if (allSelected) ids.forEach((id) => s.delete(id));
-      else ids.forEach((id) => s.add(id));
-      return s;
-    });
-  };
-
-  const visibleRows = useMemo(() => {
-    let list = rows;
-    if (searchText.trim()) {
-      const q = searchText.trim().toLowerCase();
-      list = list.filter(
-        (r) =>
-          r.name.toLowerCase().includes(q) ||
-          r.lrn.toLowerCase().includes(q) ||
-          r.email.toLowerCase().includes(q)
-      );
-    }
-    if (gradeFilter) list = list.filter((r) => r.grade_level === gradeFilter);
-    if (genderFilter)
-      list = list.filter(
-        (r) => (r.gender || '').toLowerCase() === genderFilter.toLowerCase()
-      );
-    if (docCompleteOnly) list = list.filter((r) => r.complete);
-    return list;
-  }, [rows, searchText, gradeFilter, genderFilter, docCompleteOnly]);
-
-  const totalRows = visibleRows.length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-  const startIdx = (page - 1) * pageSize;
-  const endIdx = Math.min(startIdx + pageSize, totalRows);
-  const pageRows = visibleRows.slice(startIdx, endIdx);
-
-  useEffect(() => {
-    setPage((p) => Math.min(Math.max(1, p), totalPages));
-  }, [totalPages]);
-
-  const MAX_PAGES = 5;
-  const getPageNumbers = () => {
-    if (totalPages <= MAX_PAGES)
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    const half = Math.floor(MAX_PAGES / 2);
-    let start = Math.max(1, page - half);
-    let end = Math.min(totalPages, start + MAX_PAGES - 1);
-    if (end - start + 1 < MAX_PAGES) start = Math.max(1, end - MAX_PAGES + 1);
-    const pages = [];
-    if (start > 1) {
-      pages.push(1);
-      if (start > 2) pages.push('…');
-    }
-    for (let i = start; i <= end; i++) pages.push(i);
-    if (end < totalPages) {
-      if (end < totalPages - 1) pages.push('…');
-      pages.push(totalPages);
-    }
-    return pages;
-  };
-
-  const gotoPage = (n) => setPage(Math.min(Math.max(1, n), totalPages));
-  const firstPage = () => gotoPage(1);
-  const prevPage = () => gotoPage(page - 1);
-  const nextPage = () => gotoPage(page + 1);
-  const lastPage = () => gotoPage(totalPages);
-
-  const approveEnrollments = async (enrollmentIds) => {
-    if (!enrollmentIds.length) return;
-    setModalBusy(true);
-    setError('');
-    try {
-      for (const enrollment_id of enrollmentIds) {
-        const { data: enrollmentData, error: fetchErr } = await supabase
-          .from('enrollments')
-          .select('*')
-          .eq('enrollment_id', enrollment_id)
-          .single();
-        if (fetchErr) throw fetchErr;
-
-        const { data: applicantData, error: eApplicant } = await supabase
-          .from('applicants')
-          .select('*')
-          .eq('applicant_id', enrollmentData.applicant_id)
-          .single();
-        if (eApplicant) throw eApplicant;
-
-        const { data: userData, error: eUser } = await supabase
-          .from('users')
-          .select('*')
-          .eq('user_id', applicantData.user_id)
-          .single();
-        if (eUser) throw eUser;
-
-        const { data: studentData, error: eStudent } = await supabase
-          .from('students')
-          .select('*')
-          .eq('applicant_id', enrollmentData.applicant_id)
-          .single();
-        if (eStudent) throw eStudent;
-
-        const { error: updEnrollErr } = await supabase
-          .from('enrollments')
-          .update({
-            status: 'approved',
-            adviser_approved: true,
-            dept_head_approved: true,
-            principal_approved: true,
-          })
-          .eq('enrollment_id', enrollment_id);
-        if (updEnrollErr) throw updEnrollErr;
-
-        const userUpdate = {
-          role: 'student',
-          password_hash: studentData.last_name,
-        };
-        const { error: updUserErr } = await supabase
-          .from('users')
-          .update(userUpdate)
-          .eq('user_id', applicantData.user_id);
-        if (updUserErr) throw updUserErr;
-
-        const { error: updApplicantErr } = await supabase
-          .from('users')
-          .update({ applicant_id: studentData.lrn })
-          .eq('user_id', applicantData.user_id);
-        if (updApplicantErr) throw updApplicantErr;
-
-        const templateParams = {
-          to_name: `${userData.first_name} ${userData.last_name}`,
-          to_email: userData.email,
-          school_year: enrollmentData.school_year,
-          grade_level: enrollmentData.grade_level,
-          enrollment_id: enrollment_id,
-        };
-        try {
-          await emailjs.send(
-            'service_q1ngnvg',
-            'template_hovzt9m',
-            templateParams,
-            'EXXWbe2NSHxvbalnb'
-          );
-        } catch (emailErr) {
-          console.error('Email send error:', emailErr);
-        }
+      const available = teachers.slice();
+      if (available.length === 0) {
+        setNotifMessage('No available teachers to assign.');
+        setShowApplyNotif(true);
+        return;
       }
+      const shuffled = shuffle(available);
+      const ops = [];
+      for (let i = 0; i < targetSections.length; i++) {
+        const section = targetSections[i];
+        const teacher = shuffled[i % shuffled.length];
+        ops.push(
+          supabase
+            .from('sections')
+            .update({ adviser_id: teacher.teacher_id })
+            .eq('section_id', section.section_id)
+        );
+        // Optional mirror update
+        ops.push(
+          supabase
+            .from('teachers')
+            .update({ advisory_section_id: section.section_id })
+            .eq('teacher_id', teacher.teacher_id)
+        );
+      }
+      const res = await Promise.all(ops);
+      const err = res.find((r) => r?.error);
+      if (err) throw err.error;
 
-      setRows((prev) =>
-        prev.map((r) =>
-          enrollmentIds.includes(r.enrollment_id)
-            ? { ...r, status: 'approved' }
-            : r
-        )
-      );
+      await loadSections();
+      await loadAvailableTeachers();
 
-      setSelected((prev) => {
-        const s = new Set(prev);
-        visibleRows.forEach((r) => {
-          if (enrollmentIds.includes(r.enrollment_id)) s.delete(r.applicant_id);
-        });
-        return s;
-      });
-
-      setShowConfirmation(false);
-      await loadStats();
-      await loadRows();
-    } catch (err) {
-      setError(
-        'Failed to approve enrollment(s): ' + (err.message || err.toString())
-      );
-    } finally {
-      setModalBusy(false);
+      setNotifMessage('Automated sectioning completed.');
+      setShowApplyNotif(true);
+    } catch (e) {
+      console.error(e);
+      setNotifMessage('Failed to automate sectioning.');
+      setShowApplyNotif(true);
     }
   };
 
-  const handleSingleAccept = (enrollment_id) => {
-    setConfirmPayload({ type: 'single', ids: [enrollment_id] });
-    setShowConfirmation(true);
+  // NEW: Randomize star sections (toggle is_star randomly for all sections)
+  const randomizeStarSections = async () => {
+    try {
+      if (!sections.length) return;
+      const updates = sections.map((s) =>
+        supabase
+          .from('sections')
+          .update({ is_star: Math.random() < 0.5 })
+          .eq('section_id', s.section_id)
+      );
+      const res = await Promise.all(updates);
+      const err = res.find((r) => r?.error);
+      if (err) throw err.error;
+      await loadSections();
+      setNotifMessage('Randomized star sections completed.');
+      setShowApplyNotif(true);
+    } catch (e) {
+      console.error(e);
+      setNotifMessage('Failed to randomize star sections.');
+      setShowApplyNotif(true);
+    }
   };
 
-  const handleBulkAccept = () => {
-    const toApprove = visibleRows
-      .filter((r) => r.status === 'pending' && selected.has(r.applicant_id))
-      .map((r) => r.enrollment_id);
-    if (!toApprove.length) return;
-    setConfirmPayload({ type: 'bulk', ids: toApprove });
-    setShowConfirmation(true);
+  // NEW: Remove all advisers (clear sections.adviser_id and teachers.advisory_section_id)
+  const removeAllAdvisers = async () => {
+    try {
+      const ops = [];
+      if (sections.length) {
+        const sectionIds = sections.map((s) => s.section_id);
+        ops.push(
+          supabase
+            .from('sections')
+            .update({ adviser_id: null })
+            .in('section_id', sectionIds)
+        );
+      }
+      const { data: assignedTeachers, error: tErr } = await supabase
+        .from('teachers')
+        .select('teacher_id')
+        .not('advisory_section_id', 'is', null);
+      if (tErr) throw tErr;
+      if (assignedTeachers?.length) {
+        const tids = assignedTeachers.map((t) => t.teacher_id);
+        ops.push(
+          supabase
+            .from('teachers')
+            .update({ advisory_section_id: null })
+            .in('teacher_id', tids)
+        );
+      }
+      if (ops.length) {
+        const res = await Promise.all(ops);
+        const err = res.find((r) => r?.error);
+        if (err) throw err.error;
+      }
+      await loadSections();
+      await loadAvailableTeachers();
+      setNotifMessage('All advisers removed from sections.');
+      setShowApplyNotif(true);
+    } catch (e) {
+      console.error(e);
+      setNotifMessage('Failed to remove advisers.');
+      setShowApplyNotif(true);
+    }
   };
 
-  const onConfirm = () => approveEnrollments(confirmPayload.ids);
-
-  function getPublicUrl(file_path) {
-    const { data } = supabase.storage
-      .from('enrollment-uploads')
-      .getPublicUrl(file_path);
-    return data.publicUrl;
-  }
+  // Open override helpers
+  const openOverrideSection = (sectionId) => {
+    setOverrideSectionId(sectionId);
+    setOverrideTeacherId('');
+    setShowOverrideSection(true);
+  };
+  const openOverrideStudent = (studentId) => {
+    setOverrideStudentId(studentId);
+    setOverrideTargetSectionName('');
+    setShowOverrideStudent(true);
+  };
 
   return (
     <>
       <Header />
-      <Navigation_Bar userRole="super_admin" activeSection="enrollment" />
-
-      {showConfirmation && (
-        <Confirmation_Modal
-          show={showConfirmation}
-          onClose={() => setShowConfirmation(false)}
-          onConfirm={onConfirm}
-          busy={modalBusy}
-          title={
-            confirmPayload.type === 'bulk'
-              ? 'Approve selected applications?'
-              : 'Approve this application?'
-          }
-          description="This will mark the enrollment(s) as approved and set adviser/dept/principal flags."
-        />
-      )}
-      <ImageModal
-        isOpen={!!modalImage}
-        imageUrl={modalImage}
-        onClose={() => setModalImage(null)}
+      <Navigation_Bar userRole="super_admin" />
+      <Sub_Nav
+        activeSection={activeSection}
+        onSectionChange={setActiveSection}
       />
-      <div className="admin-enrollment-container">
-        <div className="stats-container">
-          <div className="stat-card">
-            <h2>{pendingCount}</h2>
-            <p>Pending Applications</p>
-          </div>
-          <div className="stat-card">
-            <h2>{totalEnrolled}</h2>
-            <p>Total Enrolled Students</p>
-          </div>
-        </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={{ marginRight: 8 }}>School Year</label>
-          <select
-            value={schoolYear}
-            onChange={(e) => setSchoolYear(e.target.value)}
-          >
-            <option>2024-2025</option>
-            <option>2025-2026</option>
-          </select>
-        </div>
-
-        <div className="enrollmentFilter">
-          <div className="search-bar">
-            <i className="fa fa-search"></i>
-            <input
-              type="text"
-              placeholder="Search by name, LRN, or email..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-            />
-          </div>
-
-          <div className="enrollmentFilters">
-            <div className="filter">
-              <label>Application Date</label>
-              <select
-                value={dateSort}
-                onChange={(e) => setDateSort(e.target.value)}
-              >
-                <option>Newest</option>
-                <option>Oldest</option>
-              </select>
-            </div>
-            <div className="filter">
-              <label>Select Grade Level</label>
-              <select
-                value={gradeFilter}
-                onChange={(e) => setGradeFilter(e.target.value)}
-              >
-                <option value="">Grade</option>
-                {GRADES.map((g) => (
-                  <option key={g}>{g}</option>
-                ))}
-              </select>
-            </div>
-            <div className="filter">
-              <label>Gender</label>
-              <select
-                value={genderFilter}
-                onChange={(e) => setGenderFilter(e.target.value)}
-              >
-                <option value="">Select Gender</option>
-                <option>Male</option>
-                <option>Female</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div className="table-controls">
-          <div className="left-controls">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleSelectAll}
-            />{' '}
-            <span>Select All</span>
-            <span className="doc-completeness">Document Completeness</span>
-            <label className="switch">
-              <input
-                type="checkbox"
-                checked={docCompleteOnly}
-                onChange={(e) => setDocCompleteOnly(e.target.checked)}
-              />
-              <span className="slider"></span>
-            </label>
-          </div>
-
-          <button
-            className="bulk-accept"
-            onClick={handleBulkAccept}
-            disabled={
-              visibleRows.filter(
-                (r) => r.status === 'pending' && selected.has(r.applicant_id)
-              ).length === 0
-            }
-          >
-            Bulk Accept
-          </button>
-        </div>
-
-        <div className="table-container">
-          <table className="enrollment-table">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Application Date</th>
-                <th>Name</th>
-                <th>LRN</th>
-                <th>Student Status</th>
-                <th>Grade Level</th>
-                <th>PSA/Birthcert</th>
-                <th>Report Card</th>
-                <th>SF10</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={11}>Loading...</td>
-                </tr>
-              ) : pageRows.length === 0 ? (
-                <tr>
-                  <td colSpan={11}>No records found.</td>
-                </tr>
-              ) : (
-                pageRows.map((r) => (
-                  <tr key={r.enrollment_id}>
-                    <td>
-                      {r.status === 'pending' && (
-                        <input
-                          type="checkbox"
-                          checked={selected.has(r.applicant_id)}
-                          onChange={() => toggleSelection(r.applicant_id)}
-                        />
-                      )}
-                    </td>
-                    <td>
-                      {r.date ? new Date(r.date).toLocaleDateString() : '—'}
-                    </td>
-                    <td>{r.name}</td>
-                    <td>{r.lrn}</td>
-                    <td>{r.student_status}</td>
-                    <td>{r.grade_level}</td>
-                    <td>
-                      {r.hasPSA
-                        ? (() => {
-                            const studId = studentByApplicant.get(
-                              r.applicant_id
-                            )?.student_id;
-                            const docsArr = docsByStudentMap.get(studId) || [];
-                            const doc = docsArr.find(
-                              (d) => d.document_type === 'psa_birth_cert'
-                            );
-                            if (!doc) return '—';
-                            const url = getPublicUrl(doc.file_path);
-                            return (
-                              <a
-                                href="#"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setModalImage(url);
-                                }}
-                              >
-                                view
-                              </a>
-                            );
-                          })()
-                        : '—'}
-                    </td>
-
-                    <td>
-                      {r.hasCard
-                        ? (() => {
-                            const studId = studentByApplicant.get(
-                              r.applicant_id
-                            )?.student_id;
-                            const docsArr = docsByStudentMap.get(studId) || [];
-                            const doc = docsArr.find(
-                              (d) => d.document_type === 'report_card'
-                            );
-                            if (!doc) return '—';
-                            const url = getPublicUrl(doc.file_path);
-                            return (
-                              <a
-                                href="#"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setModalImage(url);
-                                }}
-                              >
-                                view
-                              </a>
-                            );
-                          })()
-                        : '—'}
-                    </td>
-
-                    <td>
-                      {r.hasSF10
-                        ? (() => {
-                            const studId = studentByApplicant.get(
-                              r.applicant_id
-                            )?.student_id;
-                            const docsArr = docsByStudentMap.get(studId) || [];
-                            const doc = docsArr.find(
-                              (d) => d.document_type === 'sf10'
-                            );
-                            if (!doc) return '—';
-                            const url = getPublicUrl(doc.file_path);
-                            return (
-                              <a
-                                href="#"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setModalImage(url);
-                                }}
-                              >
-                                view
-                              </a>
-                            );
-                          })()
-                        : '—'}
-                    </td>
-                    <td style={{ textTransform: 'capitalize' }}>{r.status}</td>
-                    <td>
-                      {r.status === 'pending' ? (
-                        <button
-                          className="accept-btn"
-                          onClick={() => {
-                            setConfirmPayload({
-                              type: 'single',
-                              ids: [r.enrollment_id],
-                            });
-                            setShowConfirmation(true);
-                          }}
-                        >
-                          Accept
-                        </button>
-                      ) : (
-                        <span>—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="pagination-bar">
-          <div className="pager-left">
-            <label className="pager-label">Rows per page</label>
-            <select
-              className="pager-size"
-              value={pageSize}
-              onChange={(e) => {
-                const newSize = parseInt(e.target.value, 10);
-                setPageSize(newSize);
-                setPage(1);
-              }}
+      <div className="placement-container">
+        {activeSection === 'sectionList' && (
+          <>
+            <ReusableConfirmationModalBox
+              showConfirm={showConfirm}
+              onCloseConfirm={() => setShowConfirm(false)}
             >
-              <option value={5}>5</option>
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-            </select>
-          </div>
+              <div>
+                <h2>Add new section?</h2>
+                <div className="buttons">
+                  <button onClick={() => setShowAddNotif(true)}>Yes</button>
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'black',
+                      border: '1px solid black',
+                    }}
+                    onClick={() => setShowConfirm(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </ReusableConfirmationModalBox>
 
-          <div className="pager-info">
-            {totalRows === 0
-              ? 'Showing 0 of 0'
-              : `Showing ${startIdx + 1}–${endIdx} of ${totalRows}`}
-          </div>
-
-          <div className="pager-right">
-            <button
-              className="pager-btn"
-              onClick={firstPage}
-              disabled={page === 1}
-              aria-label="First page"
+            <ReusableModalBox
+              show={showModal}
+              onClose={() => setShowModal(false)}
             >
-              <ion-icon name="play-back-outline"></ion-icon>
-            </button>
-
-            <button
-              className="pager-btn"
-              onClick={prevPage}
-              disabled={page === 1}
-              aria-label="Previous page"
-            >
-              <ion-icon name="chevron-back-outline"></ion-icon>
-            </button>
-
-            {getPageNumbers().map((pkey, idx) =>
-              pkey === '…' ? (
-                <span key={`ellipsis-${idx}`} className="pager-ellipsis">
-                  …
-                </span>
-              ) : (
-                <button
-                  key={pkey}
-                  className={`pager-page ${page === pkey ? 'active' : ''}`}
-                  onClick={() => gotoPage(pkey)}
-                  aria-current={page === pkey ? 'page' : undefined}
+              <div className="addNewSection">
+                <div
+                  className="back"
+                  onClick={() => setShowModal(false)}
+                  style={{ cursor: 'pointer' }}
                 >
-                  {pkey}
+                  <i className="fa fa-chevron-left" aria-hidden="true"></i>
+                </div>
+                <div className="addNewSectionInput">
+                  <label>Section Name</label>
+                  <input />
+                </div>
+                <div className="addNewSectionInput">
+                  <label>Grade Level</label>
+                  <input />
+                </div>
+                <div className="addNewSectionInput">
+                  <label>Number of Students</label>
+                  <input />
+                </div>
+                <div className="addNewSectionInput">
+                  <label>Adviser</label>
+                  <input />
+                </div>
+                <div className="buttonContainer">
+                  <button onClick={() => setShowConfirm(true)}>Add</button>
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'black',
+                      border: '1px solid black',
+                      marginLeft: 8,
+                    }}
+                    onClick={() => setShowModal(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </ReusableModalBox>
+
+            <ReusableModalBox
+              show={showAddNotif}
+              onClose={() => setShowAddNotif(false)}
+            >
+              <div className="notif">
+                <div className="img" style={{ paddingTop: '10px' }}>
+                  <img
+                    src="checkImg.png"
+                    alt="Success"
+                    style={{ height: '50px', width: '50px' }}
+                  />
+                </div>
+                <h2>Successfully Updated!</h2>
+              </div>
+            </ReusableModalBox>
+
+            <div className="sectionList">
+              <h2>Sections List</h2>
+
+              <div className="sectionListCards">
+                <div className="sectionListCard">
+                  <div className="sectionListCardData">
+                    <h2>{sections.filter((s) => s.adviser_id).length}</h2>
+                    <p>Sections with assigned advisers</p>
+                  </div>
+                  <div className="sectionListCardData">
+                    <h2>{sections.filter((s) => !s.adviser_id).length}</h2>
+                    <p>Sections without assigned advisers</p>
+                  </div>
+                </div>
+                <div className="sectionListCard">
+                  <div className="sectionlistCardData">
+                    <h2>{loadingTeachers ? '...' : teachers.length}</h2>
+                    <p>Available teachers not yet assigned</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="sectionListSorter">
+                <div className="sectionListSearch">
+                  <i className="fa fa-search" aria-hidden="true"></i>
+                  <input
+                    className="sectionListSearchbar"
+                    placeholder="Search section..."
+                    value={sectionSearch}
+                    onChange={(e) => setSectionSearch(e.target.value)}
+                  />
+                </div>
+                <div className="sectionListSort Grade">
+                  <label>Grade</label>
+                  <select
+                    value={sectionListGrade}
+                    onChange={(e) => setSectionListGrade(e.target.value)}
+                  >
+                    <option value="">All Grade</option>
+                    {GRADES.map((g) => (
+                      <option key={g.value} value={g.value}>
+                        {g.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* REPLACED: Section selector -> Star Section selector */}
+                <div className="sectionListSort Section">
+                  <label>Star Section</label>
+                  <select
+                    value={sectionStarFilter}
+                    onChange={(e) => setSectionStarFilter(e.target.value)}
+                  >
+                    <option value="">All</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="sectionListTableContainer">
+                <table>
+                  <thead>
+                    <tr>
+                      <th rowSpan="2">Section</th>
+                      <th rowSpan="2">Grade Level</th>
+                      <th rowSpan="2">No. of Students</th>
+                      <th rowSpan="2">Star Section</th>
+                      <th colSpan="2">Assign Advisers</th>
+                    </tr>
+                    <tr>
+                      <th>Advisers</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loadingSections && (
+                      <tr>
+                        <td colSpan={6}>Loading...</td>
+                      </tr>
+                    )}
+                    {!loadingSections && pageRowsSec.length === 0 && (
+                      <tr>
+                        <td colSpan={6}>No sections found.</td>
+                      </tr>
+                    )}
+                    {!loadingSections &&
+                      pageRowsSec.map((section) => (
+                        <tr key={section.section_id}>
+                          <td>{section.name}</td>
+                          <td>{section.grade_level}</td>
+                          <td>{section.num_students || '—'}</td>
+                          <td>{section.is_star ? 'Yes' : 'No'}</td>
+                          <td>
+                            {section.adviser
+                              ? `${section.adviser.user?.first_name || ''} ${section.adviser.user?.last_name || ''}`.trim() ||
+                                '—'
+                              : '—'}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() =>
+                                openOverrideSection(section.section_id)
+                              }
+                            >
+                              Override
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination - Sections */}
+              <div className="pagination-bar">
+                <div className="pager-left">
+                  <label className="pager-label">Rows per page</label>
+                  <select
+                    className="pager-size"
+                    value={pageSizeSec}
+                    onChange={(e) => {
+                      const newSize = parseInt(e.target.value, 10);
+                      setPageSizeSec(newSize);
+                      setPageSec(1);
+                    }}
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                </div>
+
+                <div className="pager-info">
+                  {totalRowsSec === 0
+                    ? 'Showing 0 of 0'
+                    : `Showing ${startIdxSec + 1}–${endIdxSec} of ${totalRowsSec}`}
+                </div>
+
+                <div className="pager-right">
+                  <button
+                    className="pager-btn"
+                    onClick={firstPageSec}
+                    disabled={pageSec === 1}
+                    aria-label="First page"
+                  >
+                    <ion-icon name="play-back-outline"></ion-icon>
+                  </button>
+                  <button
+                    className="pager-btn"
+                    onClick={prevPageSec}
+                    disabled={pageSec === 1}
+                    aria-label="Previous page"
+                  >
+                    <ion-icon name="chevron-back-outline"></ion-icon>
+                  </button>
+
+                  {getPageNumbersSec().map((pkey, idx) =>
+                    pkey === '…' ? (
+                      <span
+                        key={`ellipsis-sec-${idx}`}
+                        className="pager-ellipsis"
+                      >
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={`sec-${pkey}`}
+                        className={`pager-page ${pageSec === pkey ? 'active' : ''}`}
+                        onClick={() => gotoPageSec(pkey)}
+                        aria-current={pageSec === pkey ? 'page' : undefined}
+                      >
+                        {pkey}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    className="pager-btn"
+                    onClick={nextPageSec}
+                    disabled={pageSec === totalPagesSec}
+                    aria-label="Next page"
+                  >
+                    <ion-icon name="chevron-forward-outline"></ion-icon>
+                  </button>
+                  <button
+                    className="pager-btn"
+                    onClick={lastPageSec}
+                    disabled={pageSec === totalPagesSec}
+                    aria-label="Last page"
+                  >
+                    <ion-icon name="play-forward-outline"></ion-icon>
+                  </button>
+                </div>
+              </div>
+
+              {/* Controls: appended new buttons */}
+              <div
+                className="button-container"
+                style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
+              >
+                <button onClick={() => setShowModal(true)}>
+                  Add new section
                 </button>
-              )
-            )}
+                <button onClick={automateSectioning}>
+                  Automate sectioning
+                </button>
+                <button onClick={randomizeStarSections}>
+                  Randomize section
+                </button>
+                <button onClick={removeAllAdvisers}>Remove all advisers</button>
+              </div>
+            </div>
 
-            <button
-              className="pager-btn"
-              onClick={nextPage}
-              disabled={page === totalPages}
-              aria-label="Next page"
+            {/* Override adviser modal */}
+            <ReusableModalBox
+              show={showOverrideSection}
+              onClose={() => setShowOverrideSection(false)}
             >
-              <ion-icon name="chevron-forward-outline"></ion-icon>
-            </button>
+              <div className="overrideSection">
+                <div className="overrideSectionHeader">
+                  <h2>Override Adviser Assignment</h2>
+                </div>
+                <div className="overrideSelection">
+                  <label>Adviser</label>
+                  <select
+                    value={overrideTeacherId || ''}
+                    onChange={(e) => setOverrideTeacherId(e.target.value)}
+                  >
+                    <option value="">Select adviser</option>
+                    {teachers.map((t) => (
+                      <option key={t.teacher_id} value={t.teacher_id}>
+                        {t.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="buttonContainer">
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      border: '1px solid black',
+                      color: 'black',
+                    }}
+                    onClick={() => setShowOverrideSection(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => setShowApplySection(true)}
+                    disabled={!overrideTeacherId}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </ReusableModalBox>
 
-            <button
-              className="pager-btn"
-              onClick={lastPage}
-              disabled={page === totalPages}
-              aria-label="Last page"
+            {/* Confirm apply adviser change */}
+            <ReusableModalBox
+              show={showApplySection}
+              onClose={() => setShowApplySection(false)}
             >
-              <ion-icon name="play-forward-outline"></ion-icon>
-            </button>
-          </div>
-        </div>
+              <div className="sectionApply">
+                <h2>Apply Changes?</h2>
+                <div className="buttons">
+                  <button
+                    onClick={() => {
+                      setShowApplySection(false);
+                      setShowAddNotif(true);
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'black',
+                      border: '1px solid black',
+                    }}
+                    onClick={() => setShowApplySection(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </ReusableModalBox>
+
+            {/* Notifs */}
+            <ReusableModalBox
+              show={showAddNotif}
+              onClose={() => setShowAddNotif(false)}
+            >
+              <div className="notif">
+                <div className="img" style={{ paddingTop: '10px' }}>
+                  <img
+                    src="checkImg.png"
+                    alt="Success"
+                    style={{ height: '50px', width: '50px' }}
+                  />
+                </div>
+                <h2>Successfully Updated!</h2>
+              </div>
+            </ReusableModalBox>
+
+            <ReusableModalBox
+              show={showApplyNotif}
+              onClose={() => setShowApplyNotif(false)}
+            >
+              <div className="notif">
+                <div className="img" style={{ paddingTop: '10px' }}>
+                  <img
+                    src="checkImg.png"
+                    style={{ height: '50px', width: '50px' }}
+                  />
+                </div>
+                <h2>{notifMessage}</h2>
+              </div>
+            </ReusableModalBox>
+          </>
+        )}
+
+        {activeSection === 'studentList' && (
+          <>
+            <div className="studentList">
+              <h2>Student List</h2>
+
+              <div className="studentListCards">
+                {GRADES.map((g) => (
+                  <div
+                    key={g.value}
+                    className={`studentListCard grade${g.value}`}
+                  >
+                    <p className="gradeLevel">{g.label}</p>
+                    <h2>
+                      {
+                        students.filter(
+                          (s) => Number(s.grade_level) === g.value
+                        ).length
+                      }
+                    </h2>
+                    <p>Assigned Students</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="studentListSorter">
+                <div className="studentListSearch">
+                  <i className="fa fa-search" aria-hidden="true"></i>
+                  <input
+                    className="studentListSearchbar"
+                    placeholder="Search student name..."
+                    value={studentSearch}
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                  />
+                </div>
+                <div className="studentListSort Grade">
+                  <label>Grade</label>
+                  <select
+                    value={studentListGrade}
+                    onChange={(e) => setStudentListGrade(e.target.value)}
+                  >
+                    <option value="">All Grade</option>
+                    {GRADES.map((g) => (
+                      <option key={g.value} value={g.value}>
+                        {g.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="studentListSort Section">
+                  <label>Section</label>
+                  <select
+                    value={studentListSection}
+                    onChange={(e) => setStudentListSection(e.target.value)}
+                  >
+                    <option value="">All Section</option>
+                    {sections.map((s) => (
+                      <option key={s.section_id} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="studentListTableContainer">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Gender</th>
+                      <th>Grade Level</th>
+                      <th>Section</th>
+                      <th>Star Section</th>
+                      <th>Advisers</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loadingStudents && (
+                      <tr>
+                        <td colSpan={7}>Loading...</td>
+                      </tr>
+                    )}
+                    {!loadingStudents && pageRowsStu.length === 0 && (
+                      <tr>
+                        <td colSpan={7}>No students found.</td>
+                      </tr>
+                    )}
+                    {!loadingStudents &&
+                      pageRowsStu.map((student) => (
+                        <tr key={student.student_id}>
+                          <td>
+                            {`${student.last_name || ''}, ${student.first_name || ''}`.trim()}
+                          </td>
+                          <td>{student.gender}</td>
+                          <td>{student.grade_level || '—'}</td>
+                          <td>{student.section || '—'}</td>
+                          <td>{student.is_star ? 'Yes' : 'No'}</td>
+                          <td>{student.adviser_full_name || '—'}</td>
+                          <td>
+                            <button
+                              onClick={() =>
+                                openOverrideStudent(student.student_id)
+                              }
+                            >
+                              Override
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination - Students */}
+              <div className="pagination-bar">
+                <div className="pager-left">
+                  <label className="pager-label">Rows per page</label>
+                  <select
+                    className="pager-size"
+                    value={pageSizeStu}
+                    onChange={(e) => {
+                      const newSize = parseInt(e.target.value, 10);
+                      setPageSizeStu(newSize);
+                      setPageStu(1);
+                    }}
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                  </select>
+                </div>
+
+                <div className="pager-info">
+                  {totalRowsStu === 0
+                    ? 'Showing 0 of 0'
+                    : `Showing ${startIdxStu + 1}–${endIdxStu} of ${totalRowsStu}`}
+                </div>
+
+                <div className="pager-right">
+                  <button
+                    className="pager-btn"
+                    onClick={firstPageStu}
+                    disabled={pageStu === 1}
+                    aria-label="First page"
+                  >
+                    <ion-icon name="play-back-outline"></ion-icon>
+                  </button>
+                  <button
+                    className="pager-btn"
+                    onClick={prevPageStu}
+                    disabled={pageStu === 1}
+                    aria-label="Previous page"
+                  >
+                    <ion-icon name="chevron-back-outline"></ion-icon>
+                  </button>
+
+                  {getPageNumbersStu().map((pkey, idx) =>
+                    pkey === '…' ? (
+                      <span
+                        key={`ellipsis-stu-${idx}`}
+                        className="pager-ellipsis"
+                      >
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={`stu-${pkey}`}
+                        className={`pager-page ${pageStu === pkey ? 'active' : ''}`}
+                        onClick={() => gotoPageStu(pkey)}
+                        aria-current={pageStu === pkey ? 'page' : undefined}
+                      >
+                        {pkey}
+                      </button>
+                    )
+                  )}
+
+                  <button
+                    className="pager-btn"
+                    onClick={nextPageStu}
+                    disabled={pageStu === totalPagesStu}
+                    aria-label="Next page"
+                  >
+                    <ion-icon name="chevron-forward-outline"></ion-icon>
+                  </button>
+                  <button
+                    className="pager-btn"
+                    onClick={lastPageStu}
+                    disabled={pageStu === totalPagesStu}
+                    aria-label="Last page"
+                  >
+                    <ion-icon name="play-forward-outline"></ion-icon>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Override student modal */}
+            <ReusableModalBox
+              show={showOverrideStudent}
+              onClose={() => setShowOverrideStudent(false)}
+            >
+              <div className="overrideStudent">
+                <div className="overrideStudentHeader">
+                  <h2>Override Section Assignment</h2>
+                </div>
+                <div className="overrideSelection">
+                  <label>Section</label>
+                  <select
+                    value={overrideTargetSectionName}
+                    onChange={(e) =>
+                      setOverrideTargetSectionName(e.target.value)
+                    }
+                  >
+                    <option value="">Select section</option>
+                    {sections.map((s) => (
+                      <option key={s.section_id} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="buttonContainer">
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      border: '1px solid black',
+                      color: 'black',
+                    }}
+                    onClick={() => setShowOverrideStudent(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => setShowApplyStudent(true)}
+                    disabled={!overrideTargetSectionName}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </ReusableModalBox>
+
+            {/* Confirm apply student change */}
+            <ReusableModalBox
+              show={showApplyStudent}
+              onClose={() => setShowApplyStudent(false)}
+            >
+              <div className="studentApply">
+                <h2>Apply Changes?</h2>
+                <div className="buttons">
+                  <button
+                    onClick={() => {
+                      setShowApplyStudent(false);
+                      setShowApplyNotif(true);
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'black',
+                      border: '1px solid black',
+                    }}
+                    onClick={() => setShowApplyStudent(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </ReusableModalBox>
+
+            {/* Notif */}
+            <ReusableModalBox
+              show={showApplyNotif}
+              onClose={() => setShowApplyNotif(false)}
+            >
+              <div className="notif">
+                <div className="img" style={{ paddingTop: '10px' }}>
+                  <img
+                    src="checkImg.png"
+                    style={{ height: '50px', width: '50px' }}
+                  />
+                </div>
+                <h2>{notifMessage}</h2>
+              </div>
+            </ReusableModalBox>
+          </>
+        )}
       </div>
     </>
   );
